@@ -13,6 +13,7 @@ import {
   setSuggestionStatus,
 } from "../db";
 import { openPosition } from "../services/paperTrading";
+import { normalizeInterval } from "../services/marketData";
 import {
   analyzeOneAsset,
   getPrice,
@@ -95,7 +96,7 @@ ai.post("/suggestions/:id/approve", async (c) => {
 
   let entry = sug.entry ?? 0;
   try {
-    entry = (await getPrice(c.env, asset, 15)) || sug.entry || 0;
+    entry = (await getPrice(c.env, asset, 15, normalizeInterval(user.analysis_timeframe))) || sug.entry || 0;
   } catch {
     /* fall back to suggestion entry */
   }

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import type { RiskLevel, User } from "../../shared/types";
+import type { RiskLevel, Timeframe, User } from "../../shared/types";
 import { fmtCurrency } from "../lib/format";
+
+const TIMEFRAMES: Timeframe[] = ["1h", "4h", "1d"];
 
 const RISK_INFO: Record<RiskLevel, string> = {
   low: "1% risk / trade",
@@ -27,6 +29,7 @@ export function ConfigPanel({
   const [autoTrade, setAutoTrade] = useState(user.auto_trade_enabled === 1);
   const [allowShort, setAllowShort] = useState(user.allow_shorting === 1);
   const [model, setModel] = useState(user.gemini_model ?? "");
+  const [timeframe, setTimeframe] = useState<Timeframe>(user.analysis_timeframe ?? "1d");
 
   // Re-sync when the server state changes (e.g. after reset).
   useEffect(() => {
@@ -37,6 +40,7 @@ export function ConfigPanel({
     setAutoTrade(user.auto_trade_enabled === 1);
     setAllowShort(user.allow_shorting === 1);
     setModel(user.gemini_model ?? "");
+    setTimeframe(user.analysis_timeframe ?? "1d");
   }, [user]);
 
   const dirty =
@@ -46,6 +50,7 @@ export function ConfigPanel({
     maxOpen !== user.max_open_positions ||
     autoTrade !== (user.auto_trade_enabled === 1) ||
     allowShort !== (user.allow_shorting === 1) ||
+    timeframe !== (user.analysis_timeframe ?? "1d") ||
     (model || null) !== (user.gemini_model || null);
 
   const save = () =>
@@ -57,6 +62,7 @@ export function ConfigPanel({
       auto_trade_enabled: autoTrade ? 1 : 0,
       allow_shorting: allowShort ? 1 : 0,
       gemini_model: model || null,
+      analysis_timeframe: timeframe,
     });
 
   return (
@@ -76,6 +82,20 @@ export function ConfigPanel({
             type="button"
           >
             {r}
+          </button>
+        ))}
+      </div>
+
+      <label className="field-label">Analysis timeframe</label>
+      <div className="segmented">
+        {TIMEFRAMES.map((tf) => (
+          <button
+            key={tf}
+            className={`seg ${timeframe === tf ? "active" : ""}`}
+            onClick={() => setTimeframe(tf)}
+            type="button"
+          >
+            {tf}
           </button>
         ))}
       </div>

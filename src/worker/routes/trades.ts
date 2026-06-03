@@ -12,6 +12,7 @@ import {
 import { num } from "../util";
 import { closePosition, openPosition } from "../services/paperTrading";
 import { getPrice, recordEquity } from "../services/analysisEngine";
+import { normalizeInterval } from "../services/marketData";
 
 const trades = new Hono<{ Bindings: Env }>();
 
@@ -38,7 +39,7 @@ trades.post("/", async (c) => {
   let entry = num(body.entry, 0);
   if (!(entry > 0)) {
     try {
-      entry = await getPrice(c.env, asset, 15);
+      entry = await getPrice(c.env, asset, 15, normalizeInterval(user.analysis_timeframe));
     } catch (e) {
       return c.json(
         { error: "could not determine price", detail: e instanceof Error ? e.message : String(e) },
@@ -78,7 +79,7 @@ trades.post("/:id/close", async (c) => {
   let price = num(body.exit_price ?? body.price, 0);
   if (!(price > 0)) {
     try {
-      price = await getPrice(c.env, asset, 5);
+      price = await getPrice(c.env, asset, 5, normalizeInterval(user.analysis_timeframe));
     } catch (e) {
       return c.json(
         { error: "could not determine price", detail: e instanceof Error ? e.message : String(e) },

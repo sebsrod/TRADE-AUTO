@@ -7,6 +7,7 @@ import type {
   GeminiDiscovery,
   Indicators,
   OpenPosition,
+  Timeframe,
   Trade,
   User,
 } from "../../shared/types";
@@ -28,7 +29,7 @@ import {
 } from "../db";
 import { hoursBetween, round, safeJsonParse } from "../util";
 import { computeIndicators } from "./indicators";
-import { fetchMarketData } from "./marketData";
+import { fetchMarketData, normalizeInterval } from "./marketData";
 import { analyzeAsset as geminiAnalyze, discoverOpportunities } from "./gemini";
 import {
   canCloseNow,
@@ -47,6 +48,7 @@ export interface SnapshotData {
   indicators: Indicators;
   source: string;
   cached: boolean;
+  interval: Timeframe;
 }
 
 // Fetch a market snapshot, preferring a recent cached row to respect API limits.
@@ -54,8 +56,10 @@ export async function getSnapshot(
   env: Env,
   asset: Asset,
   maxAgeMinutes = 30,
+  interval: Timeframe = "1d",
 ): Promise<SnapshotData> {
-  const cached = await getFreshSnapshot(env, asset.id, "1d", maxAgeMinutes);
+  const tf = normalizeInterval(interval);
+  const cached = await getFreshSnapshot(env, asset.id, tf, maxAgeMinutes);
   if (cached) {
     const candles = safeJsonParse<Candle[]>(cached.ohlcv_json, []);
     const indicators =
@@ -68,17 +72,18 @@ export async function getSnapshot(
       indicators,
       source: "cache",
       cached: true,
+      interval: tf,
     };
   }
 
-  const md = await fetchMarketData(asset, env);
+  const md = await fetchMarketData(asset, env, tf);
   const indicators = computeIndicators(md.candles);
   // Persist a trimmed candle set (keep payload small) + indicators.
-  const trimmed = md.candles.slice(-260);
+  const trimmed = md.candles.slice(-300);
   await saveSnapshot(env, {
     asset_id: asset.id,
     symbol: asset.symbol,
-    interval: "1d",
+    interval: tf,
     price: md.price,
     ohlcv_json: JSON.stringify(trimmed),
     indicators_json: JSON.stringify(indicators),
@@ -90,11 +95,17 @@ export async function getSnapshot(
     indicators,
     source: md.source,
     cached: false,
+    interval: tf,
   };
 }
 
-export async function getPrice(env: Env, asset: Asset, maxAgeMinutes = 60): Promise<number> {
-  const snap = await getSnapshot(env, asset, maxAgeMinutes);
+export async function getPrice(
+  env: Env,
+  asset: Asset,
+  maxAgeMinutes = 60,
+  interval: Timeframe = "1d",
+): Promise<number> {
+  const snap = await getSnapshot(env, asset, maxAgeMinutes, interval);
   return snap.price;
 }
 
@@ -105,11 +116,12 @@ export async function enrichPositions(
   trades: Trade[],
 ): Promise<OpenPosition[]> {
   const out: OpenPosition[] = [];
+  const tf = normalizeInterval(user.analysis_timeframe);
   for (const t of trades) {
     let price: number | null = null;
     try {
       const asset = await getAsset(env, t.asset_id);
-      if (asset) price = await getPrice(env, asset, 60);
+      if (asset) price = await getPrice(env, asset, 60, tf);
     } catch {
       price = null;
     }
@@ -165,11 +177,12 @@ export async function runPositionManagement(
 ): Promise<{ closed: Trade[]; checked: number }> {
   const open = await listOpenTrades(env, user.id);
   const closed: Trade[] = [];
+  const tf = normalizeInterval(user.analysis_timeframe);
   for (const t of open) {
     try {
       const asset = await getAsset(env, t.asset_id);
       if (!asset) continue;
-      const price = await getPrice(env, asset, 20);
+      const price = await getPrice(env, asset, 20, tf);
       const hit = checkStops(t, price);
       if (hit) {
         // Refresh user cash between closes so balances stay consistent.
@@ -199,7 +212,7 @@ export async function analyzeOneAsset(
   asset: Asset,
   autoTrade: boolean,
 ): Promise<AnalyzeResult> {
-  const snap = await getSnapshot(env, asset, 30);
+  const snap = await getSnapshot(env, asset, 30, normalizeInterval(user.analysis_timeframe));
   const openTrade = (await listOpenTrades(env, user.id)).find((t) => t.asset_id === asset.id);
   const { decision, raw } = await geminiAnalyze(
     env,
@@ -277,10 +290,11 @@ export async function runDiscovery(
   maxIdeas = 5,
 ): Promise<DiscoveryOutcome> {
   const assets = (await listAssets(env, { activeOnly: true, whitelistedOnly: true })).slice(0, 30);
+  const tf = normalizeInterval(user.analysis_timeframe);
   const rows: Array<{ asset: Asset; ind: Indicators }> = [];
   for (const asset of assets) {
     try {
-      const snap = await getSnapshot(env, asset, 60);
+      const snap = await getSnapshot(env, asset, 60, tf);
       rows.push({ asset, ind: snap.indicators });
     } catch {
       // skip assets we couldn't fetch
@@ -351,7 +365,7 @@ export async function autoTradeFromIdeas(
     const u = (await getUser(env, user.id)) ?? user;
     let entry = idea.entry;
     try {
-      entry = (await getPrice(env, asset, 30)) || idea.entry;
+      entry = (await getPrice(env, asset, 30, normalizeInterval(u.analysis_timeframe))) || idea.entry;
     } catch {
       /* use idea.entry */
     }

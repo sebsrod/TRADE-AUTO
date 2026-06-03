@@ -162,8 +162,25 @@ const last = (arr: (number | null)[]): number | null => {
   return null;
 };
 
-// Compute the full indicator snapshot used for AI prompts + the UI.
-export function computeIndicators(candles: Candle[]): Indicators {
+// Infer how many candles span a day from their actual timestamps, so the 24h
+// change and range window are correct regardless of the requested/labeled interval
+// (e.g. a "4h" request that a provider served as 1h bars).
+function inferPeriodsPerDay(candles: Candle[]): number {
+  if (candles.length < 3) return 1;
+  const deltas: number[] = [];
+  for (let i = 1; i < candles.length; i++) {
+    const d = candles[i].t - candles[i - 1].t;
+    if (d > 0) deltas.push(d);
+  }
+  if (!deltas.length) return 1;
+  deltas.sort((a, b) => a - b);
+  const median = deltas[Math.floor(deltas.length / 2)];
+  return Math.max(1, Math.min(96, Math.round(86_400_000 / median)));
+}
+
+// Compute the full indicator snapshot used for AI prompts + the UI. The candle
+// interval is inferred from timestamps; pass `periodsPerDayOverride` to force it.
+export function computeIndicators(candles: Candle[], periodsPerDayOverride?: number): Indicators {
   const closes = candles.map((c) => c.c);
   const price = closes.length ? closes[closes.length - 1] : 0;
 
@@ -183,13 +200,21 @@ export function computeIndicators(candles: Candle[]): Indicators {
   const bbMid = last(bb.mid);
   const atr14 = last(atr(candles, 14));
 
-  const window = closes.slice(-260); // ~52 weeks of daily / recent window
+  const ppd =
+    periodsPerDayOverride && periodsPerDayOverride > 0
+      ? Math.round(periodsPerDayOverride)
+      : inferPeriodsPerDay(candles);
+
+  // ~52 weeks of bars at this interval (intraday fetches are shorter, so this
+  // naturally returns the full available window — the honest max range).
+  const window = closes.slice(-Math.max(20, 260 * ppd));
   const high52 = window.length ? Math.max(...window) : null;
   const low52 = window.length ? Math.min(...window) : null;
 
   let changePct24h: number | null = null;
-  if (closes.length >= 2) {
-    const prev = closes[closes.length - 2];
+  const lookback = Math.max(1, ppd);
+  if (closes.length > lookback) {
+    const prev = closes[closes.length - 1 - lookback];
     if (prev) changePct24h = ((price - prev) / prev) * 100;
   }
 

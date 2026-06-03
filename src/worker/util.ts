@@ -40,17 +40,23 @@ export function normalizeSqlTime(s: string): string {
   return s.replace(" ", "T") + "Z";
 }
 
+// Run `fn` with a timeout. On timeout the AbortSignal is aborted so the underlying
+// fetch is actually cancelled (not just abandoned), freeing the Worker's subrequest.
 export async function withTimeout<T>(
-  p: Promise<T>,
+  fn: (signal: AbortSignal) => Promise<T>,
   ms: number,
   label = "operation",
 ): Promise<T> {
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout>;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
   });
   try {
-    return await Promise.race([p, timeout]);
+    return await Promise.race([fn(controller.signal), timeout]);
   } finally {
     clearTimeout(timer!);
   }

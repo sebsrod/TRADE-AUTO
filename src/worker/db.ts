@@ -60,6 +60,7 @@ const USER_FIELDS = [
   "auto_trade_enabled",
   "allow_shorting",
   "gemini_model",
+  "analysis_timeframe",
 ];
 
 export async function updateUser(
@@ -80,6 +81,18 @@ export async function adjustCash(env: Env, id: number, delta: number): Promise<v
   )
     .bind(delta, id)
     .run();
+}
+
+// Atomically debit cash only if the balance covers it. Returns false (no debit)
+// when funds are insufficient. Guards against TOCTOU double-spend because D1 has
+// no row locks and the Pages app + cron Worker share the same database.
+export async function tryDebitCash(env: Env, id: number, amount: number): Promise<boolean> {
+  const r = await env.DB.prepare(
+    "UPDATE users SET cash_balance = cash_balance - ?, updated_at = datetime('now') WHERE id = ? AND cash_balance >= ?",
+  )
+    .bind(amount, id, amount)
+    .run();
+  return (r.meta?.changes ?? 0) === 1;
 }
 
 // --------------------------- assets ---------------------------
@@ -328,12 +341,15 @@ export async function insertTrade(
   return r;
 }
 
+// Close a trade only if it is still open. Returns null when the guarded UPDATE
+// matched no row (already closed by a concurrent caller), so the caller must not
+// credit cash twice.
 export async function closeTradeRow(
   env: Env,
   id: number,
   c: { exit_price: number; pnl: number; pnl_pct: number; exit_reason: string },
 ): Promise<Trade | null> {
-  await env.DB.prepare(
+  const r = await env.DB.prepare(
     `UPDATE trades
        SET status = 'closed', exit_price = ?, exit_time = datetime('now'),
            pnl = ?, pnl_pct = ?, exit_reason = ?, updated_at = datetime('now')
@@ -341,6 +357,7 @@ export async function closeTradeRow(
   )
     .bind(c.exit_price, c.pnl, c.pnl_pct, c.exit_reason, id)
     .run();
+  if ((r.meta?.changes ?? 0) !== 1) return null;
   return getTrade(env, id);
 }
 

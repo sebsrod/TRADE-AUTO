@@ -2,6 +2,7 @@
 
 export type AssetCategory = "stock" | "etf" | "future" | "option" | "crypto";
 export type RiskLevel = "low" | "medium" | "high";
+export type Timeframe = "1h" | "4h" | "1d";
 export type TradeSide = "long" | "short";
 export type TradeStatus = "open" | "closed";
 export type AIDecision = "BUY" | "SELL" | "HOLD" | "CLOSE";
@@ -25,6 +26,7 @@ export interface User {
   auto_trade_enabled: number; // 0 | 1
   allow_shorting: number; // 0 | 1
   gemini_model: string | null;
+  analysis_timeframe: Timeframe;
   created_at: string;
   updated_at: string;
 }
@@ -218,6 +220,29 @@ export interface GeminiDiscovery {
   stopLoss: number;
   takeProfit: number;
   confidence: number;
+}
+
+export interface OptionContract {
+  contractSymbol: string; // OCC symbol, e.g. AAPL240119C00150000
+  type: "call" | "put";
+  strike: number;
+  lastPrice: number;
+  bid: number | null;
+  ask: number | null;
+  volume: number | null;
+  openInterest: number | null;
+  impliedVolatility: number | null;
+  inTheMoney: boolean;
+  expiration: number; // epoch ms
+}
+
+export interface OptionChain {
+  underlying: string;
+  underlyingPrice: number | null;
+  expirations: number[]; // epoch ms
+  expiration: number | null; // the one returned
+  calls: OptionContract[];
+  puts: OptionContract[];
 }
 
 export interface ApiError {

@@ -1,6 +1,6 @@
 # TRADE-AUTO
 
-**A Gemini-powered autonomous paper-trading platform on Cloudflare Workers + D1.**
+**A Gemini-powered autonomous paper-trading platform on Cloudflare Pages + D1.**
 
 TRADE-AUTO evaluates whether a Gemini-driven AI agent can act as a high-level autonomous
 trader. It scans stocks, ETFs, futures, options and crypto, computes technical indicators
@@ -11,68 +11,72 @@ Sharpe, drawdown) so you can judge the AI's skill.
 > ⚠️ **Paper trading only.** Nothing here places real orders or constitutes financial advice.
 > Market data is free/delayed and provided as-is.
 
+🔗 **Live:** deployed to Cloudflare Pages (`*.pages.dev`). See [Deploy](#deploy-to-cloudflare).
+
 ---
 
 ## Architecture
 
 | Layer | Choice | Why |
 | --- | --- | --- |
-| Runtime | **Cloudflare Workers** (Static Assets) | One deployable that serves the SPA, the API, **and** cron jobs. Cloudflare Pages can't run cron triggers — Workers can. |
-| API router | **Hono** | First-class Workers support, tiny, plays well with D1 + static assets. |
-| Database | **Cloudflare D1** (edge SQLite) | Serverless SQL with migrations; perfect for the lean schema. |
-| AI | **Gemini REST API** (`fetch`) | Most reliable on the Workers runtime; model is configurable via env var. |
-| Market data | **Binance** (crypto, keyless) + **Yahoo Finance v8** (everything else, keyless) | Works out of the box with no API keys; Finnhub/Alpha Vantage/Polygon are optional fallbacks. |
-| Frontend | **Vite + React + TypeScript** SPA + **Recharts** | Fast, modern dashboard built to `dist/client` and served by the Worker. |
+| Frontend + API | **Cloudflare Pages** (SPA + Pages Function) | One project, free `*.pages.dev` domain. The `/api/*` Function is the Hono app via `hono/cloudflare-pages`. |
+| Scheduling | **Companion cron Worker** (`./cron`) | Pages can't run cron triggers, so a tiny Worker runs the AI cycle every 2h against the **same D1** (shares the service code). |
+| API router | **Hono** | Tiny, first-class Workers/Pages support; one app shared by the Function and the optional standalone Worker. |
+| Database | **Cloudflare D1** (edge SQLite) | Serverless SQL with migrations; bound to both the Pages project and the cron Worker. |
+| AI | **Gemini REST API** (`fetch`) | Most reliable on the Workers runtime; model configurable via env var. |
+| Market data | **Binance** (crypto) + **Yahoo Finance v8** (stocks/ETF/futures/options) + **CBOE** (option chains) | All keyless. Finnhub/Alpha Vantage are optional keyed fallbacks. |
+| Frontend | **Vite + React + TS** + **Recharts** | Fast dashboard built to `dist/client`. |
 
 ```
-Browser ──► Worker (Hono) ──► D1            (config, trades, snapshots, ai_logs…)
-                │     ├──► Binance / Yahoo   (OHLCV → local RSI/MACD/MA/ATR/BB)
-                │     └──► Gemini API        (decisions + discovery, JSON mode)
+Browser ──► Pages Function (/api/*, Hono) ──► D1            (config, trades, snapshots, ai_logs…)
+                │     ├──► Binance / Yahoo / CBOE   (OHLCV + options → local RSI/MACD/MA/ATR/BB)
+                │     └──► Gemini API               (decisions + discovery, JSON mode)
                 ▼
-   Static SPA (dist/client)
+   Static SPA (dist/client, _redirects SPA fallback)
 
-Cron (every 2h) ──► scheduled() ──► manage stops → discover ideas → auto-trade → record equity
+cron Worker (every 2h) ──► runCronCycle(sharedD1) ──► manage stops → discover → auto-trade → record equity
 ```
 
 ### Data model (D1)
 
-`users` (config + paper balance) · `assets` (monitored instruments + whitelist) ·
-`market_snapshots` (cached OHLCV + indicators) · `trades` (paper ledger) ·
+`users` (config + paper balance + timeframe) · `assets` (instruments + whitelist) ·
+`market_snapshots` (cached OHLCV + indicators, keyed by interval) · `trades` (paper ledger) ·
 `ai_logs` (every Gemini analysis) · `suggestions` (discovered ideas) ·
-`equity_history` (ROI / drawdown / Sharpe series). See `migrations/0001_init.sql`.
+`equity_history` (ROI / drawdown / Sharpe series). See `migrations/`.
 
 ---
 
 ## Quick start (local)
 
-Requirements: Node 20+ (Node 23+ for the indicator test), a Cloudflare account, and a
-[Gemini API key](https://aistudio.google.com/apikey).
+Requirements: Node 20+, a Cloudflare account, and a [Gemini API key](https://aistudio.google.com/apikey).
 
 ```bash
 npm install
 
 # 1. Create the D1 database and paste the returned database_id into wrangler.jsonc
+#    (and cron/wrangler.jsonc — both bind the same database)
 npm run db:create
-#   -> copy "database_id" into wrangler.jsonc  (d1_databases[0].database_id)
 
 # 2. Apply migrations to the LOCAL database
 npm run db:migrate
 
 # 3. Add your Gemini key for local dev
-cp .dev.vars.example .dev.vars      # then edit .dev.vars and set GEMINI_API_KEY
+cp .dev.vars.example .dev.vars      # then edit and set GEMINI_API_KEY
 
-# 4a. Run the API (Worker + local D1) on :8787
+# 4a. Run the Pages app (SPA + API + local D1) on :8788
 npm run dev:api
 
-# 4b. In a second terminal, run the React dev server on :5173 (proxies /api → :8787)
+# 4b. In a second terminal, run the Vite dev server on :5173 (proxies /api → :8788)
 npm run dev
 ```
 
-Open http://localhost:5173. Market data, charts and manual paper trading work without a
-Gemini key; the AI features need `GEMINI_API_KEY`.
+Open http://localhost:5173. Market data, charts, options and manual paper trading work
+without a Gemini key; the AI features need `GEMINI_API_KEY`.
 
-> Prefer a single process? Run `npm run preview` — it builds the SPA and serves everything
-> (SPA + API + local D1 + cron) from `wrangler dev` on http://localhost:8787.
+```bash
+npm test          # indicator math + Gemini-mock + paper-trading tests (no network/key)
+npm run typecheck # type-check worker + client + cron + functions
+```
 
 ---
 
@@ -81,25 +85,29 @@ Gemini key; the AI features need `GEMINI_API_KEY`.
 ```bash
 # one-time
 npx wrangler login
-npm run db:create                       # if you haven't already; paste id into wrangler.jsonc
-npm run db:migrate:remote               # apply schema to the production D1
 
-# secrets (only GEMINI_API_KEY is required)
-npx wrangler secret put GEMINI_API_KEY
-# optional fallbacks:
-npx wrangler secret put FINNHUB_API_KEY
-npx wrangler secret put ALPHAVANTAGE_API_KEY
-npx wrangler secret put POLYGON_API_KEY
+# 1. Create the D1 database, paste database_id into BOTH wrangler.jsonc and cron/wrangler.jsonc
+npm run db:create
+npm run db:migrate:remote                 # apply schema to production D1
 
-# build SPA + deploy worker (cron trigger ships automatically)
-npm run deploy
+# 2. Create the Pages project and deploy the app (SPA + API Function)
+npm run pages:create                      # one-time: creates the *.pages.dev project
+npm run deploy                            # build + wrangler pages deploy
+
+# 3. Secrets (only GEMINI_API_KEY is required)
+npx wrangler pages secret put GEMINI_API_KEY
+#   optional keyed fallbacks:
+npx wrangler pages secret put FINNHUB_API_KEY
+
+# 4. Deploy the companion cron Worker (runs the AI cycle every 2h on the shared D1)
+npx wrangler secret put GEMINI_API_KEY --config cron/wrangler.jsonc
+npm run deploy:cron
 ```
 
-`npm run deploy` runs `vite build` then `wrangler deploy`. The cron trigger (`0 */2 * * *`)
-starts running the AI cycle automatically. You can also trigger it manually from the
-dashboard ("Run AI cycle") or via `POST /api/ai/run-cycle`.
+You get a free `https://trade-auto.pages.dev` URL. The cron Worker handles scheduling; you
+can also run a cycle manually from the dashboard ("Run AI cycle") or `POST /api/ai/run-cycle`.
 
-### Configuration (wrangler.jsonc → `vars`)
+### Configuration (`vars` in wrangler.jsonc)
 
 | Var | Default | Meaning |
 | --- | --- | --- |
@@ -111,18 +119,21 @@ dashboard ("Run AI cycle") or via `POST /api/ai/run-cycle`.
 
 ---
 
-## Trading rules & guardrails
+## Features
 
-- **Position sizing** scales with the risk level: Low = 1%, Medium = 2%, High = 5% of cash
-  risked per trade (entry→stop distance), capped by a per-position notional ceiling.
-- **Min-hold guardrail** (default 8h) blocks AI/manual closes until satisfied; protective
-  stop-loss / take-profit exits always fire. Manual close from the UI can override.
-- **Max trades per asset / 24h** (default 3) and **max open positions** (default 10).
-- **Auto-trade** only runs when both `CRON_AUTO_TRADE` and the user's *Auto-trade* toggle are
-  on, and only for ideas with confidence ≥ 0.6. Otherwise suggestions wait for your approval.
-- **Shorting** is off by default; enable it in the Configuration panel.
-
-All of these are editable live from the dashboard's **Configuration** panel.
+- **Multi-asset scanning** — stocks, ETFs, futures, options, crypto.
+- **Adjustable analysis timeframe** — 1h / 4h / 1d (intraday or daily candles).
+- **Local indicators** — RSI, MACD, SMA/EMA, Bollinger Bands, ATR, 52-wk range, trend.
+- **Gemini decisions** — per-asset Buy/Sell/Hold with rationale, stop, target, R:R; plus a
+  universe "discovery" scan that surfaces trend-swing ideas as approve/reject suggestions.
+- **Options chains** — browse CBOE-sourced strikes/expiries for any underlying and add a
+  specific contract (OCC symbol) as a tradable asset.
+- **Deterministic paper engine** — risk-based sizing (Low 1% / Medium 2% / High 5%), notional
+  caps, exact cash conservation, auto stop-loss / take-profit.
+- **Guardrails** — min-hold (default 8h), max-trades/asset/24h (default 3), max-open positions,
+  whitelist, optional shorting — all editable live.
+- **Performance** — ROI, win-rate, profit factor, expectancy, annualized Sharpe, max drawdown,
+  equity curve.
 
 ---
 
@@ -133,12 +144,12 @@ All of these are editable live from the dashboard's **Configuration** panel.
 | `GET /health` | Service + Gemini status. |
 | `GET/PATCH /config` · `POST /config/reset` | Read/update trading config; reset paper account. |
 | `GET/POST /assets` · `PATCH/DELETE /assets/:id` | Manage the watchlist + whitelist. |
-| `GET /market/:assetId` | Cached OHLCV + indicators (powers charts). |
+| `GET /market/:assetId?interval=1h\|4h\|1d` | Cached OHLCV + indicators (powers charts). |
+| `GET /options/:symbol` · `POST /options/track` | Option chain for an underlying; track a contract. |
 | `GET /portfolio` · `/portfolio/metrics` · `/portfolio/equity` | Positions, metrics, equity curve. |
 | `GET/POST /trades` · `POST /trades/:id/close` | Ledger; open/close paper positions. |
 | `POST /ai/analyze/:assetId` | Deep Gemini analysis of one asset (`{"execute":true}` to act). |
-| `POST /ai/discover` | Scan the universe for trade ideas. |
-| `POST /ai/run-cycle` | Run the full scheduled cycle now. |
+| `POST /ai/discover` · `POST /ai/run-cycle` | Run the discovery scan / full cycle now. |
 | `GET /ai/logs` · `GET /ai/suggestions` | AI history + discovered ideas. |
 | `POST /ai/suggestions/:id/approve` · `/reject` | Execute or dismiss a suggestion. |
 
@@ -147,29 +158,26 @@ All of these are editable live from the dashboard's **Configuration** panel.
 ## Project layout
 
 ```
+functions/api/[[route]].ts   # Cloudflare Pages Function → Hono app (/api/*)
+cron/                        # companion cron Worker (scheduling) sharing the same D1
 src/
-  shared/types.ts          # API contract shared by worker + client
+  shared/types.ts            # API contract shared by worker + client
   worker/
-    index.ts               # Hono app (fetch) + scheduled (cron) handler
-    db.ts                  # D1 repositories
-    routes/                # config, assets, market, portfolio, trades, ai
+    app.ts                   # Hono app (shared by the Pages Function + Worker entry)
+    index.ts                 # optional standalone Worker entry (native cron)
+    db.ts                    # D1 repositories
+    routes/                  # config, assets, market, options, portfolio, trades, ai
     services/
-      indicators.ts        # SMA/EMA/RSI/MACD/Bollinger/ATR (+ smoke test)
-      marketData.ts        # Binance + Yahoo (+ Finnhub) ingestion
-      gemini.ts            # Gemini REST client + prompts + JSON parsing
-      paperTrading.ts      # sizing, guardrails, fills, stops
-      metrics.ts           # ROI, win-rate, Sharpe, drawdown
-      analysisEngine.ts    # orchestration + cron cycle
-  client/                  # Vite + React dashboard
-migrations/                # D1 schema + seed
-wrangler.jsonc             # Worker config (assets, D1, cron, vars)
-```
-
-## Tests
-
-```bash
-npm run test:indicators    # validates the indicator math (Node 23+)
-npm run typecheck          # type-check worker + client
+      indicators.ts          # SMA/EMA/RSI/MACD/Bollinger/ATR (+ tests)
+      marketData.ts          # Binance + Yahoo (+ Finnhub) candles, CBOE option chains
+      gemini.ts              # Gemini REST client + prompts + JSON parsing (+ tests)
+      paperTrading.ts        # sizing, guardrails, fills, stops (+ tests)
+      metrics.ts             # ROI, win-rate, Sharpe, drawdown
+      analysisEngine.ts      # orchestration + cron cycle
+  client/                    # Vite + React dashboard
+migrations/                  # D1 schema + seed + timeframe column
+wrangler.jsonc               # Pages config (assets, D1, vars)
+scripts/run-test.mjs         # esbuild-based test runner
 ```
 
 ## License

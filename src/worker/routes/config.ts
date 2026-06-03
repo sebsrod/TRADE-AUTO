@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
-import type { RiskLevel, User } from "../../shared/types";
+import type { RiskLevel, Timeframe, User } from "../../shared/types";
 import { defaultUserId, ensureUser, updateUser } from "../db";
 import { clamp, num } from "../util";
 
@@ -33,6 +33,9 @@ config.patch("/", async (c) => {
   if (body.allow_shorting !== undefined) patch.allow_shorting = body.allow_shorting ? 1 : 0;
   if (body.gemini_model !== undefined) {
     patch.gemini_model = body.gemini_model ? String(body.gemini_model).slice(0, 60) : null;
+  }
+  if (body.analysis_timeframe && ["1h", "4h", "1d"].includes(String(body.analysis_timeframe))) {
+    patch.analysis_timeframe = body.analysis_timeframe as Timeframe;
   }
   if (body.starting_balance !== undefined) {
     patch.starting_balance = clamp(num(body.starting_balance, 100000), 100, 1_000_000_000);

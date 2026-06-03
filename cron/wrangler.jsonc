@@ -1,0 +1,32 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "trade-auto-cron",
+  "main": "index.ts",
+  "compatibility_date": "2025-06-01",
+
+  // Companion scheduling Worker for the Pages app. Pages can't run cron triggers,
+  // so this tiny Worker runs the analysis cycle on a schedule against the SAME D1.
+  // It has no public routes; it shares the database + service code with the app.
+  "triggers": {
+    "crons": ["0 */2 * * *"]
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "trade-auto-db",
+      "database_id": "6308332d-d87d-4b14-8a8b-ff0e4a68c6cf",
+      "migrations_dir": "../migrations"
+    }
+  ],
+
+  "observability": { "enabled": true },
+
+  "vars": {
+    "GEMINI_MODEL": "gemini-2.5-flash",
+    "GEMINI_DISCOVERY_MODEL": "gemini-2.5-flash",
+    "DEFAULT_USER_ID": "1",
+    "ENABLE_SEARCH_GROUNDING": "false",
+    "CRON_AUTO_TRADE": "true"
+  }
+}

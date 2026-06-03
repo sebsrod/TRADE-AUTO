@@ -2,6 +2,7 @@
 // Uses JSON output mode and robustly parses the model's structured response.
 
 import type {
+  AIDecision,
   Asset,
   GeminiDecision,
   GeminiDiscovery,
@@ -65,7 +66,10 @@ async function callGemini(
   opts: { grounding?: boolean; temperature?: number; maxTokens?: number } = {},
 ): Promise<GeminiRawCall> {
   if (!env.GEMINI_API_KEY) {
-    throw new Error("GEMINI_API_KEY is not configured (set it with `wrangler secret put GEMINI_API_KEY`).");
+    throw new Error(
+      "GEMINI_API_KEY is not configured. Set it with `wrangler pages secret put GEMINI_API_KEY` " +
+        "(for the cron Worker: `wrangler secret put GEMINI_API_KEY --config cron/wrangler.jsonc`).",
+    );
   }
   const grounded = !!opts.grounding;
   const body: Record<string, unknown> = {
@@ -73,6 +77,10 @@ async function callGemini(
     generationConfig: {
       temperature: opts.temperature ?? 0.4,
       maxOutputTokens: opts.maxTokens ?? 2048,
+      // 2.5/3.x are "thinking" models whose reasoning tokens count against
+      // maxOutputTokens; disable thinking so the whole budget goes to the JSON
+      // answer (this is structured extraction, not open-ended reasoning).
+      thinkingConfig: { thinkingBudget: 0 },
       // JSON mode and the google_search tool can conflict; only force JSON when not grounding.
       ...(grounded ? {} : { responseMimeType: "application/json" }),
     },
@@ -81,11 +89,13 @@ async function callGemini(
 
   const url = `${BASE}/${model}:generateContent?key=${env.GEMINI_API_KEY}`;
   const res = await withTimeout(
-    fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }),
+    (signal) =>
+      fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal,
+      }),
     GEMINI_TIMEOUT_MS,
     "gemini generateContent",
   );
@@ -116,7 +126,7 @@ function indicatorBlock(ind: Indicators): string {
     `sma20=${fmt(ind.sma20, 4)} sma50=${fmt(ind.sma50, 4)} sma200=${fmt(ind.sma200, 4)}`,
     `bbUpper=${fmt(ind.bbUpper, 4)} bbLower=${fmt(ind.bbLower, 4)}`,
     `atr14=${fmt(ind.atr14, 4)}`,
-    `high52=${fmt(ind.high52, 4)} low52=${fmt(ind.low52, 4)}`,
+    `rangeHigh=${fmt(ind.high52, 4)} rangeLow=${fmt(ind.low52, 4)}`,
     `chg24h%=${fmt(ind.changePct24h)}`,
   ].join(", ");
 }
@@ -176,13 +186,12 @@ ${DECISION_SHAPE}`;
 }
 
 function normalizeDecision(p: any, price: number, allowShort: boolean): GeminiDecision {
-  let decision = String(p.decision ?? "HOLD").toUpperCase() as GeminiDecision;
+  let decision = String(p.decision ?? "HOLD").toUpperCase() as AIDecision;
   if (!["BUY", "SELL", "HOLD", "CLOSE"].includes(decision)) decision = "HOLD";
-  let side = String(p.side ?? (decision === "SELL" ? "short" : "long")).toLowerCase() as
-    | "long"
-    | "short";
-  if (side !== "long" && side !== "short") side = "long";
   if (decision === "SELL" && !allowShort) decision = "HOLD";
+  // Derive side deterministically from the decision so direction, stop, and
+  // target are always self-consistent regardless of what the model emitted.
+  const side: "long" | "short" = decision === "SELL" ? "short" : "long";
   const entry = roundPrice(num(p.entry, price) || price);
   const stopLoss = roundPrice(num(p.stopLoss, 0));
   const takeProfit = roundPrice(num(p.takeProfit, 0));

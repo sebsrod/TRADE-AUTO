@@ -7,8 +7,10 @@ import type {
   EquityPoint,
   GeminiDiscovery,
   Indicators,
+  OptionChain,
   PortfolioResponse,
   Suggestion,
+  Timeframe,
   Trade,
   User,
 } from "../shared/types";
@@ -40,6 +42,7 @@ export interface MarketResponse {
   price: number;
   source: string;
   cached: boolean;
+  interval: Timeframe;
   indicators: Indicators;
   candles: Candle[];
 }
@@ -69,7 +72,17 @@ export const api = {
   deleteAsset: (id: number) => req<{ ok: boolean }>(`/assets/${id}`, { method: "DELETE" }),
 
   // market
-  market: (assetId: number) => req<MarketResponse>(`/market/${assetId}`),
+  market: (assetId: number, interval?: Timeframe) =>
+    req<MarketResponse>(`/market/${assetId}${interval ? `?interval=${interval}` : ""}`),
+
+  // options
+  optionChain: (symbol: string, expiration?: number) =>
+    req<OptionChain>(`/options/${symbol}${expiration ? `?expiration=${expiration}` : ""}`),
+  trackOption: (contractSymbol: string, name?: string) =>
+    req<Asset>("/options/track", {
+      method: "POST",
+      body: JSON.stringify({ contractSymbol, name }),
+    }),
 
   // portfolio / metrics
   portfolio: () => req<PortfolioResponse>("/portfolio"),

@@ -6,16 +6,18 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:api": "wrangler dev",
+    "dev:api": "npm run build && wrangler pages dev --port 8788",
     "build": "vite build",
-    "preview": "npm run build && wrangler dev",
-    "deploy": "npm run build && wrangler deploy",
+    "preview": "npm run build && wrangler pages dev --port 8788",
+    "deploy": "npm run build && wrangler pages deploy",
+    "deploy:cron": "wrangler deploy --config cron/wrangler.jsonc",
+    "pages:create": "wrangler pages project create trade-auto --production-branch main",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.worker.json --noEmit",
     "db:create": "wrangler d1 create trade-auto-db",
     "db:migrate": "wrangler d1 migrations apply trade-auto-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply trade-auto-db --remote",
-    "db:reset": "wrangler d1 execute trade-auto-db --local --command \"SELECT 1\"",
-    "test:indicators": "node --experimental-strip-types src/worker/services/indicators.test.ts"
+    "test": "node scripts/run-test.mjs src/worker/services/indicators.test.ts && node scripts/run-test.mjs src/worker/services/gemini.test.ts && node scripts/run-test.mjs src/worker/services/paperTrading.test.ts",
+    "test:indicators": "node scripts/run-test.mjs src/worker/services/indicators.test.ts"
   },
   "dependencies": {
     "hono": "^4.6.14",

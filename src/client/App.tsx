@@ -16,6 +16,7 @@ import { PortfolioPanel } from "./components/PortfolioPanel";
 import { ResearchHub } from "./components/ResearchHub";
 import { ConfigPanel } from "./components/ConfigPanel";
 import { AssetManager } from "./components/AssetManager";
+import { OptionsChain } from "./components/OptionsChain";
 import { TradesTable } from "./components/TradesTable";
 import { AILogsPanel } from "./components/AILogsPanel";
 import { Toast, type ToastMsg } from "./components/Toast";
@@ -35,6 +36,7 @@ export default function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastMsg | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadSeq = useRef(0);
 
   const notify = useCallback((message: string, kind: ToastMsg["kind"] = "info") => {
     setToast({ message, kind });
@@ -43,6 +45,7 @@ export default function App() {
   }, []);
 
   const loadAll = useCallback(async (silent = false) => {
+    const seq = ++loadSeq.current;
     if (!silent) setLoading(true);
     try {
       const [p, eq, sug, closed, as, logs, h] = await Promise.all([
@@ -54,6 +57,8 @@ export default function App() {
         api.aiLogs(30),
         api.health().catch(() => null),
       ]);
+      // Ignore this response if a newer loadAll has since been issued.
+      if (seq !== loadSeq.current) return;
       setPortfolio(p);
       setEquity(eq);
       setSuggestions(sug);
@@ -63,9 +68,9 @@ export default function App() {
       if (h) setHealth(h);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (seq === loadSeq.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   }, []);
 
@@ -116,6 +121,11 @@ export default function App() {
       run(`asset-${id}`, async () => {
         await api.deleteAsset(id);
         return "Asset removed";
+      }),
+    trackOption: (contractSymbol: string, name?: string) =>
+      run("trackOption", async () => {
+        const a = await api.trackOption(contractSymbol, name);
+        return `Tracking ${a.symbol}`;
       }),
     analyze: (id: number) =>
       run(`analyze-${id}`, async () => {
@@ -219,6 +229,7 @@ export default function App() {
             onAnalyze={actions.analyze}
             onTrade={actions.openTrade}
           />
+          <OptionsChain busy={busy} onTrack={actions.trackOption} />
         </aside>
       </main>
 

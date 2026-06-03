@@ -11,6 +11,7 @@ import {
   getOpenTradeForAsset,
   insertTrade,
   listOpenTrades,
+  tryDebitCash,
 } from "../db";
 import { hoursBetween, round, roundPrice } from "../util";
 
@@ -131,29 +132,35 @@ export async function openPosition(
   if (!(sizing.quantity > 0) || !(sizing.positionValue > 0)) {
     return { ok: false, reason: "position size rounds to zero" };
   }
-  if (sizing.positionValue > user.cash_balance) {
-    return { ok: false, reason: "insufficient cash" };
-  }
 
-  // Reserve notional from cash, then write the trade.
-  await adjustCash(env, user.id, -sizing.positionValue);
-  const trade = await insertTrade(env, {
-    user_id: user.id,
-    asset_id: asset.id,
-    symbol: asset.symbol,
-    category: asset.category,
-    side: p.side,
-    quantity: sizing.quantity,
-    entry_price: entry,
-    stop_loss: sizing.stopLoss,
-    take_profit: sizing.takeProfit,
-    position_value: sizing.positionValue,
-    risk_amount: sizing.riskAmount,
-    ai_rationale: p.rationale,
-    ai_log_id: p.aiLogId,
-    confidence: p.confidence,
-  });
-  return { ok: true, trade };
+  // Atomically reserve notional from cash (guards against concurrent over-spend).
+  const debited = await tryDebitCash(env, user.id, sizing.positionValue);
+  if (!debited) return { ok: false, reason: "insufficient cash" };
+
+  // Write the trade. A partial unique index enforces one open position per asset;
+  // if a concurrent caller already opened one, the INSERT throws — refund the debit.
+  try {
+    const trade = await insertTrade(env, {
+      user_id: user.id,
+      asset_id: asset.id,
+      symbol: asset.symbol,
+      category: asset.category,
+      side: p.side,
+      quantity: sizing.quantity,
+      entry_price: entry,
+      stop_loss: sizing.stopLoss,
+      take_profit: sizing.takeProfit,
+      position_value: sizing.positionValue,
+      risk_amount: sizing.riskAmount,
+      ai_rationale: p.rationale,
+      ai_log_id: p.aiLogId,
+      confidence: p.confidence,
+    });
+    return { ok: true, trade };
+  } catch (e) {
+    await adjustCash(env, user.id, sizing.positionValue); // refund the reserved cash
+    return { ok: false, reason: "position already open for asset" };
+  }
 }
 
 export function realizedPnl(trade: Trade, exitPrice: number): number {
@@ -208,14 +215,15 @@ export async function closePosition(
   const pnlPct =
     trade.position_value > 0 ? round((pnl / trade.position_value) * 100, 2) : 0;
 
-  // Return reserved notional + realized PnL to cash.
-  await adjustCash(env, user.id, trade.position_value + pnl);
+  // Close first (guarded UPDATE). Only credit cash if THIS call closed the row,
+  // so a concurrent/duplicate close can't double-credit the account.
   const closed = await closeTradeRow(env, trade.id, {
     exit_price: exit,
     pnl,
     pnl_pct: pnlPct,
     exit_reason: reason,
   });
-  if (!closed) return { ok: false, reason: "failed to close" };
+  if (!closed) return { ok: false, reason: "already closed" };
+  await adjustCash(env, user.id, trade.position_value + pnl);
   return { ok: true, trade: closed, pnl };
 }
