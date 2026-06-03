@@ -1,0 +1,35 @@
+{
+  "name": "trade-auto",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Gemini-powered autonomous paper-trading platform on Cloudflare Workers + D1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:api": "wrangler dev",
+    "build": "vite build",
+    "preview": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.worker.json --noEmit",
+    "db:create": "wrangler d1 create trade-auto-db",
+    "db:migrate": "wrangler d1 migrations apply trade-auto-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply trade-auto-db --remote",
+    "db:reset": "wrangler d1 execute trade-auto-db --local --command \"SELECT 1\"",
+    "test:indicators": "node --experimental-strip-types src/worker/services/indicators.test.ts"
+  },
+  "dependencies": {
+    "hono": "^4.6.14",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.13.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250601.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "wrangler": "^4.20.0"
+  }
+}
