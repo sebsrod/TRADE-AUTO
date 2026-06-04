@@ -8,7 +8,7 @@ import type {
   Trade,
   User,
 } from "../shared/types";
-import type { Env } from "./types";
+import type { Env, UserRow } from "./types";
 
 export function defaultUserId(env: Env): number {
   const id = parseInt(env.DEFAULT_USER_ID || "1", 10);
@@ -31,11 +31,42 @@ function buildUpdate(
 }
 
 // --------------------------- users ---------------------------
-export async function getUser(env: Env, id: number): Promise<User | null> {
-  return env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(id).first<User>();
+export async function getUser(env: Env, id: number): Promise<UserRow | null> {
+  return env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(id).first<UserRow>();
 }
 
-export async function ensureUser(env: Env, id: number): Promise<User> {
+export async function getUserByEmail(env: Env, email: string): Promise<UserRow | null> {
+  return env.DB.prepare("SELECT * FROM users WHERE email = ?")
+    .bind(email.trim().toLowerCase())
+    .first<UserRow>();
+}
+
+// All real (credentialed) accounts — used by the cron Worker to run each user's
+// cycle. The legacy seeded id=1 row (NULL password) is intentionally excluded.
+export async function listUserIds(env: Env): Promise<number[]> {
+  const r = await env.DB.prepare(
+    "SELECT id FROM users WHERE password_hash IS NOT NULL ORDER BY id",
+  ).all<{ id: number }>();
+  return (r.results ?? []).map((x) => x.id);
+}
+
+// Create a new credentialed account starting from the standard $100k paper balance.
+export async function createUser(
+  env: Env,
+  u: { name: string; email: string; password_hash: string; password_salt: string },
+): Promise<UserRow> {
+  const r = await env.DB.prepare(
+    `INSERT INTO users (name, email, password_hash, password_salt, starting_balance, cash_balance)
+     VALUES (?, ?, ?, ?, 100000, 100000)
+     RETURNING *`,
+  )
+    .bind(u.name, u.email.trim().toLowerCase(), u.password_hash, u.password_salt)
+    .first<UserRow>();
+  if (!r) throw new Error("Failed to create user");
+  return r;
+}
+
+export async function ensureUser(env: Env, id: number): Promise<UserRow> {
   let user = await getUser(env, id);
   if (!user) {
     await env.DB.prepare(
@@ -47,6 +78,73 @@ export async function ensureUser(env: Env, id: number): Promise<User> {
   }
   if (!user) throw new Error("Failed to create default user");
   return user;
+}
+
+// --------------------------- sessions ---------------------------
+// Expiry is computed in SQL so it shares datetime('now')'s "YYYY-MM-DD HH:MM:SS"
+// format — required for the lexical `expires_at > datetime('now')` comparison.
+export async function createSession(
+  env: Env,
+  tokenHash: string,
+  userId: number,
+  ttlDays: number,
+): Promise<void> {
+  await env.DB.prepare(
+    "INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, datetime('now', ?))",
+  )
+    .bind(tokenHash, userId, `+${Math.max(1, Math.round(ttlDays))} days`)
+    .run();
+}
+
+// Resolve an unexpired session to its user id (null if missing/expired).
+export async function getSessionUserId(env: Env, tokenHash: string): Promise<number | null> {
+  const r = await env.DB.prepare(
+    "SELECT user_id FROM sessions WHERE token_hash = ? AND expires_at > datetime('now')",
+  )
+    .bind(tokenHash)
+    .first<{ user_id: number }>();
+  return r?.user_id ?? null;
+}
+
+export async function deleteSession(env: Env, tokenHash: string): Promise<void> {
+  await env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(tokenHash).run();
+}
+
+export async function pruneExpiredSessions(env: Env): Promise<void> {
+  await env.DB.prepare("DELETE FROM sessions WHERE expires_at <= datetime('now')").run();
+}
+
+// --------------------------- live_quotes ---------------------------
+// Latest spot price if cached within maxAgeSeconds, else null (caller refetches).
+export async function getFreshLiveQuote(
+  env: Env,
+  assetId: number,
+  maxAgeSeconds: number,
+): Promise<number | null> {
+  const r = await env.DB.prepare(
+    `SELECT price FROM live_quotes
+     WHERE asset_id = ? AND fetched_at >= datetime('now', ?)`,
+  )
+    .bind(assetId, `-${Math.max(1, Math.round(maxAgeSeconds))} seconds`)
+    .first<{ price: number }>();
+  return r?.price ?? null;
+}
+
+export async function saveLiveQuote(
+  env: Env,
+  q: { asset_id: number; symbol: string; price: number; source: string },
+): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO live_quotes (asset_id, symbol, price, source, fetched_at)
+     VALUES (?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(asset_id) DO UPDATE SET
+       symbol = excluded.symbol,
+       price = excluded.price,
+       source = excluded.source,
+       fetched_at = excluded.fetched_at`,
+  )
+    .bind(q.asset_id, q.symbol, q.price, q.source)
+    .run();
 }
 
 const USER_FIELDS = [
@@ -67,7 +165,7 @@ export async function updateUser(
   env: Env,
   id: number,
   patch: Partial<User>,
-): Promise<User> {
+): Promise<UserRow> {
   const upd = buildUpdate("users", patch as Record<string, unknown>, USER_FIELDS);
   if (upd) await env.DB.prepare(upd.sql).bind(...upd.values, id).run();
   const user = await getUser(env, id);

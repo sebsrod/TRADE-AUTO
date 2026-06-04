@@ -1,20 +1,23 @@
 import { Hono } from "hono";
-import type { Env } from "../types";
+import type { AppBindings } from "../types";
 import type { RiskLevel, Timeframe, User } from "../../shared/types";
-import { defaultUserId, ensureUser, updateUser } from "../db";
+import { getUser, updateUser } from "../db";
+import { sanitizeUser } from "../services/auth";
 import { clamp, num } from "../util";
 
-const config = new Hono<{ Bindings: Env }>();
+const config = new Hono<AppBindings>();
 
 // GET current user / global trading configuration.
 config.get("/", async (c) => {
-  const user = await ensureUser(c.env, defaultUserId(c.env));
-  return c.json(user);
+  const user = await getUser(c.env, c.get("userId"));
+  if (!user) return c.json({ error: "unauthorized" }, 401);
+  return c.json(sanitizeUser(user));
 });
 
 // PATCH trading configuration (risk, timeframes, balances, toggles).
 config.patch("/", async (c) => {
-  const user = await ensureUser(c.env, defaultUserId(c.env));
+  const user = await getUser(c.env, c.get("userId"));
+  if (!user) return c.json({ error: "unauthorized" }, 401);
   const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
   const patch: Partial<User> = {};
 
@@ -42,13 +45,14 @@ config.patch("/", async (c) => {
   }
 
   const updated = await updateUser(c.env, user.id, patch);
-  return c.json(updated);
+  return c.json(sanitizeUser(updated));
 });
 
 // POST reset the paper account: restore cash, wipe trades/equity/suggestions.
 config.post("/reset", async (c) => {
   const env = c.env;
-  const user = await ensureUser(env, defaultUserId(env));
+  const user = await getUser(env, c.get("userId"));
+  if (!user) return c.json({ error: "unauthorized" }, 401);
   await env.DB.batch([
     env.DB.prepare("DELETE FROM trades WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM equity_history WHERE user_id = ?").bind(user.id),
@@ -57,8 +61,8 @@ config.post("/reset", async (c) => {
       "UPDATE users SET cash_balance = starting_balance, updated_at = datetime('now') WHERE id = ?",
     ).bind(user.id),
   ]);
-  const fresh = await ensureUser(env, user.id);
-  return c.json({ ok: true, user: fresh });
+  const fresh = await getUser(env, user.id);
+  return c.json({ ok: true, user: fresh ? sanitizeUser(fresh) : null });
 });
 
 export default config;

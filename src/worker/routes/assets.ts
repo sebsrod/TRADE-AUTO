@@ -1,9 +1,9 @@
 import { Hono } from "hono";
-import type { Env } from "../types";
+import type { AppBindings } from "../types";
 import type { AssetCategory } from "../../shared/types";
 import { deleteAsset, insertAsset, listAssets, updateAsset } from "../db";
 
-const assets = new Hono<{ Bindings: Env }>();
+const assets = new Hono<AppBindings>();
 
 const CATEGORIES: AssetCategory[] = ["stock", "etf", "future", "option", "crypto"];
 

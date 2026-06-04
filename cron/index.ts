@@ -2,7 +2,7 @@
 // Cloudflare Pages can't run cron triggers, so this Worker runs the analysis cycle
 // on a schedule against the SAME D1 database, reusing the app's service code.
 
-import { runCronCycle } from "../src/worker/services/analysisEngine";
+import { runCronCycleAllUsers } from "../src/worker/services/analysisEngine";
 import type { Env } from "../src/worker/types";
 
 export default {
@@ -17,17 +17,17 @@ export default {
       );
     }
     ctx.waitUntil(
-      runCronCycle(env)
+      runCronCycleAllUsers(env)
         .then((summary) => console.log("cron cycle complete:", JSON.stringify(summary)))
         .catch((err) => console.error("cron cycle failed:", err)),
     );
   },
 
-  // Manual trigger for testing: GET /__run executes one cycle.
+  // Manual trigger for testing: GET /__run executes one cycle for all users.
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/__run") {
-      const summary = await runCronCycle(env);
+      const summary = await runCronCycleAllUsers(env);
       return Response.json(summary);
     }
     return new Response("trade-auto cron worker — runs the AI cycle every 2h", { status: 200 });

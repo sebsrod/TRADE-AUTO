@@ -182,6 +182,91 @@ export async function fetchMarketData(
 }
 
 // ---------------------------------------------------------------------------
+// Lightweight latest-price quotes — for the fast live-P&L poll. Much cheaper than
+// fetchMarketData (no full candle history / indicators): a single ticker for crypto,
+// or Yahoo's regularMarketPrice for everything else.
+// ---------------------------------------------------------------------------
+export interface Quote {
+  price: number;
+  source: string;
+}
+
+async function fetchBinanceQuote(symbol: string): Promise<Quote> {
+  const hosts = ["https://api.binance.com", "https://data-api.binance.vision"];
+  let lastErr: unknown;
+  for (const host of hosts) {
+    try {
+      const data = await fetchJson(
+        `${host}/api/v3/ticker/price?symbol=${encodeURIComponent(symbol)}`,
+      );
+      const price = num(data?.price);
+      if (price > 0) return { price, source: "binance" };
+      lastErr = new Error("binance: non-positive price");
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr ?? new Error("binance quote failed");
+}
+
+async function fetchYahooQuote(symbol: string): Promise<Quote> {
+  const hosts = ["https://query1.finance.yahoo.com", "https://query2.finance.yahoo.com"];
+  let lastErr: unknown;
+  for (const host of hosts) {
+    try {
+      // interval=1d&range=1d keeps the payload tiny; meta.regularMarketPrice is live.
+      const url = `${host}/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`;
+      const data = await fetchJson(url);
+      const result = data?.chart?.result?.[0];
+      if (!result) throw new Error("yahoo: empty result");
+      let price = num(result.meta?.regularMarketPrice, 0);
+      if (!(price > 0)) {
+        const closes: Array<number | null> = result.indicators?.quote?.[0]?.close ?? [];
+        for (let i = closes.length - 1; i >= 0; i--) {
+          if (closes[i] != null) {
+            price = num(closes[i]);
+            break;
+          }
+        }
+      }
+      if (price > 0) return { price, source: "yahoo" };
+      lastErr = new Error("yahoo: non-positive price");
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr ?? new Error("yahoo quote failed");
+}
+
+// Latest spot price for an asset, routed like fetchMarketData with graceful fallback.
+export async function fetchQuote(asset: Asset, _env: Env): Promise<Quote> {
+  const isCrypto = asset.category === "crypto";
+  const source = (asset.data_source || (isCrypto ? "binance" : "yahoo")).toLowerCase();
+
+  const attempts: Array<() => Promise<Quote>> = [];
+  if (source === "binance" || isCrypto) attempts.push(() => fetchBinanceQuote(asset.symbol));
+  if (source === "yahoo" || (!isCrypto && source !== "finnhub")) {
+    attempts.push(() => fetchYahooQuote(asset.symbol));
+  }
+  if (isCrypto) attempts.push(() => fetchYahooQuote(asset.symbol.replace("USDT", "-USD")));
+
+  let lastErr: unknown;
+  for (const attempt of attempts) {
+    try {
+      const q = await attempt();
+      if (q.price > 0) return q;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw new Error(
+    `Failed to fetch quote for ${asset.symbol}: ${
+      lastErr instanceof Error ? lastErr.message : String(lastErr)
+    }`,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Option chains. Primary: CBOE delayed quotes (keyless, all expiries in one call).
 // Fallback: Yahoo v7 (now often needs a crumb, so used only if CBOE fails).
 // ---------------------------------------------------------------------------

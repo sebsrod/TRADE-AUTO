@@ -1,0 +1,179 @@
+/* Auth gate + live-P&L styling. Loaded by App.tsx on top of index.css. */
+
+/* ---------------- live P&L ---------------- */
+.live-pip {
+  margin-left: 8px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  vertical-align: middle;
+}
+.live-pip.on {
+  color: var(--pos);
+  animation: live-pulse 1.6s ease-in-out infinite;
+}
+.live-pip.off {
+  color: var(--muted);
+}
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Brief green/red wash when a live number ticks. */
+.flash-up {
+  animation: flash-up 0.7s ease-out;
+  border-radius: 6px;
+}
+.flash-down {
+  animation: flash-down 0.7s ease-out;
+  border-radius: 6px;
+}
+@keyframes flash-up {
+  0% {
+    background: rgba(52, 211, 153, 0.28);
+  }
+  100% {
+    background: transparent;
+  }
+}
+@keyframes flash-down {
+  0% {
+    background: rgba(244, 63, 94, 0.28);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+/* ---------------- account chip (header) ---------------- */
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 12px;
+  margin-left: 4px;
+  border-left: 1px solid var(--border);
+}
+.user-name {
+  font-size: 12px;
+  color: var(--muted-2);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------- auth screen ---------------- */
+.auth-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.auth-card {
+  width: 100%;
+  max-width: 408px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  box-shadow: var(--shadow);
+}
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+.auth-brand h1 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: 0.02em;
+}
+.auth-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-2);
+  padding: 4px;
+  border-radius: 10px;
+  margin-bottom: 20px;
+}
+.auth-tab {
+  flex: 1;
+  padding: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted-2);
+  font: inherit;
+  font-weight: 600;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.auth-tab.active {
+  background: var(--card-2);
+  color: var(--text);
+}
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.auth-field span {
+  font-size: 12px;
+  color: var(--muted-2);
+}
+.auth-field input {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text);
+  font: inherit;
+}
+.auth-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.auth-submit {
+  margin-top: 4px;
+  width: 100%;
+  justify-content: center;
+}
+.auth-error {
+  background: rgba(244, 63, 94, 0.12);
+  border: 1px solid rgba(244, 63, 94, 0.3);
+  color: var(--neg);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.auth-foot {
+  margin-top: 18px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.7;
+}
+.auth-link {
+  background: none;
+  border: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+.auth-link:hover {
+  text-decoration: underline;
+}

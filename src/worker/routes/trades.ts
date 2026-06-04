@@ -1,9 +1,7 @@
 import { Hono } from "hono";
-import type { Env } from "../types";
+import type { AppBindings } from "../types";
 import type { TradeSide } from "../../shared/types";
 import {
-  defaultUserId,
-  ensureUser,
   getAsset,
   getTrade,
   getUser,
@@ -14,10 +12,11 @@ import { closePosition, openPosition } from "../services/paperTrading";
 import { getPrice, recordEquity } from "../services/analysisEngine";
 import { normalizeInterval } from "../services/marketData";
 
-const trades = new Hono<{ Bindings: Env }>();
+const trades = new Hono<AppBindings>();
 
 trades.get("/", async (c) => {
-  const user = await ensureUser(c.env, defaultUserId(c.env));
+  const user = await getUser(c.env, c.get("userId"));
+  if (!user) return c.json({ error: "unauthorized" }, 401);
   const status = c.req.query("status") as "open" | "closed" | undefined;
   const limit = parseInt(c.req.query("limit") ?? "200", 10);
   const list = await listTrades(c.env, user.id, {
@@ -29,7 +28,8 @@ trades.get("/", async (c) => {
 
 // Manually open a paper position.
 trades.post("/", async (c) => {
-  const user = await ensureUser(c.env, defaultUserId(c.env));
+  const user = await getUser(c.env, c.get("userId"));
+  if (!user) return c.json({ error: "unauthorized" }, 401);
   const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
   const assetId = parseInt(String(body.assetId ?? body.asset_id ?? ""), 10);
   const asset = await getAsset(c.env, assetId);
@@ -66,7 +66,8 @@ trades.post("/", async (c) => {
 
 // Manually close a position (overrides the min-hold guardrail).
 trades.post("/:id/close", async (c) => {
-  const user = await ensureUser(c.env, defaultUserId(c.env));
+  const user = await getUser(c.env, c.get("userId"));
+  if (!user) return c.json({ error: "unauthorized" }, 401);
   const id = parseInt(c.req.param("id"), 10);
   const trade = await getTrade(c.env, id);
   if (!trade || trade.user_id !== user.id) return c.json({ error: "trade not found" }, 404);

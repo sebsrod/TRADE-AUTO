@@ -17,6 +17,7 @@ export type SuggestionStatus =
 export interface User {
   id: number;
   name: string;
+  email: string | null;
   starting_balance: number;
   cash_balance: number;
   risk_level: RiskLevel;
@@ -192,6 +193,19 @@ export interface PortfolioResponse {
   user: User;
   metrics: PerformanceMetrics;
   positions: OpenPosition[];
+}
+
+// Lightweight payload for the fast (~5s) live-P&L poll: positions repriced at the
+// latest spot quote + freshly recomputed metrics. No user/closed-trade churn.
+export interface LivePortfolio {
+  positions: OpenPosition[];
+  metrics: PerformanceMetrics;
+  asOf: string;
+}
+
+// The authenticated account as returned by the auth endpoints (no secrets).
+export interface AuthResponse {
+  user: User;
 }
 
 // The structured decision Gemini returns for a single asset.
