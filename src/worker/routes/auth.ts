@@ -5,6 +5,7 @@ import {
   createSession,
   createUser,
   deleteSession,
+  deleteUserAccount,
   getUser,
   getUserByEmail,
 } from "../db";
@@ -105,6 +106,18 @@ auth.get("/me", async (c) => {
   const user = await getUser(c.env, c.get("userId"));
   if (!user) return c.json({ error: "unauthorized" }, 401);
   return c.json({ user: sanitizeUser(user) });
+});
+
+// DELETE /api/auth/account — permanently delete the signed-in account and all of its
+// data (trades, equity, suggestions, AI logs, sessions). Behind the session guard, so
+// it can only ever delete the caller's own account. Clears the cookie on the way out.
+auth.delete("/account", async (c) => {
+  const userId = c.get("userId");
+  const user = await getUser(c.env, userId);
+  if (!user) return c.json({ error: "unauthorized" }, 401);
+  await deleteUserAccount(c.env, userId);
+  deleteCookie(c, SESSION_COOKIE, { path: "/" });
+  return c.json({ ok: true });
 });
 
 export default auth;

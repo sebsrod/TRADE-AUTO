@@ -180,13 +180,27 @@ export default function App() {
   const actions = {
     updateConfig: (patch: Partial<User> & Record<string, unknown>) =>
       run("config", async () => {
+        const wasAuto = portfolio?.user.auto_trade_enabled === 1;
         await api.updateConfig(patch);
+        // Turning auto-trade ON kicks off an AI cycle immediately so positions start
+        // opening right away (rather than waiting for the next scheduled cron run).
+        if (patch.auto_trade_enabled === 1 && !wasAuto) {
+          const r = await api.runCycle();
+          const errs = r.errors?.length ? ` · ⚠ ${r.errors.length} error(s)` : "";
+          return `Auto-trade on — cycle ran: ${r.autoOpened} opened, ${r.closedByStops} closed, ${r.suggestions} ideas${errs}`;
+        }
         return "Configuration saved";
       }),
     resetAccount: () =>
       run("reset", async () => {
         await api.resetAccount();
         return "Paper account reset to starting balance";
+      }),
+    deleteAccount: () =>
+      run("delete-account", async () => {
+        await api.deleteAccount();
+        // Account + session are gone server-side; drop all local state → auth gate.
+        onUnauthorized();
       }),
     addAsset: (a: { symbol: string; category: string }) =>
       run("addAsset", async () => {
@@ -240,7 +254,8 @@ export default function App() {
     runCycle: () =>
       run("cycle", async () => {
         const r = await api.runCycle();
-        return `Cycle: ${r.autoOpened} opened, ${r.closedByStops} stopped, ${r.suggestions} ideas`;
+        const errs = r.errors?.length ? ` · ⚠ ${r.errors.length} error(s)` : "";
+        return `Cycle: ${r.autoOpened} opened, ${r.closedByStops} stopped, ${r.suggestions} ideas${errs}`;
       }),
   };
 
@@ -321,6 +336,7 @@ export default function App() {
               busy={busy}
               onSave={actions.updateConfig}
               onReset={actions.resetAccount}
+              onDelete={actions.deleteAccount}
             />
           )}
           <AssetManager

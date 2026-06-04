@@ -244,7 +244,9 @@ export async function runPositionManagement(
     try {
       const asset = await getAsset(env, t.asset_id);
       if (!asset) continue;
-      const price = await getPrice(env, asset, 20, tf);
+      // Check stops against the live spot quote (the price the user sees), falling
+      // back to the snapshot only if the live feed is unreachable.
+      const price = (await getLivePrice(env, asset, 8, tf)) ?? (await getPrice(env, asset, 20, tf));
       const hit = checkStops(t, price);
       if (hit) {
         // Refresh user cash between closes so balances stay consistent.
@@ -274,7 +276,8 @@ export async function analyzeOneAsset(
   asset: Asset,
   autoTrade: boolean,
 ): Promise<AnalyzeResult> {
-  const snap = await getSnapshot(env, asset, 30, normalizeInterval(user.analysis_timeframe));
+  const tf = normalizeInterval(user.analysis_timeframe);
+  const snap = await getSnapshot(env, asset, 30, tf);
   const openTrade = (await listOpenTrades(env, user.id)).find((t) => t.asset_id === asset.id);
   const { decision, raw } = await geminiAnalyze(
     env,
@@ -307,14 +310,19 @@ export async function analyzeOneAsset(
   let action = "none";
   if (autoTrade) {
     const u = (await getUser(env, user.id)) ?? user;
+    // Use the live spot quote for the actual fill so realized P&L stays consistent
+    // with the live dashboard; fall back to the snapshot close if the feed is down.
+    // Computed lazily (only when a fill may happen) to avoid an extra quote fetch +
+    // live_quotes write on read-only analyses (execute=false).
+    const fillPrice = (await getLivePrice(env, asset, 8, tf)) ?? snap.price;
     if ((decision.decision === "CLOSE" || decision.decision === "SELL") && openTrade) {
-      const res = await closePosition(env, u, openTrade, snap.price, "ai_signal");
+      const res = await closePosition(env, u, openTrade, fillPrice, "ai_signal");
       action = res.ok ? "closed" : `skip_close:${res.reason}`;
     } else if (decision.decision === "BUY" || decision.decision === "SELL") {
       if (decision.confidence >= AUTO_TRADE_MIN_CONFIDENCE && !openTrade) {
         const res = await openPosition(env, u, asset, {
           side: decision.side,
-          entry: snap.price || decision.entry,
+          entry: fillPrice || decision.entry,
           stopLoss: decision.stopLoss,
           takeProfit: decision.takeProfit,
           confidence: decision.confidence,
@@ -425,12 +433,10 @@ export async function autoTradeFromIdeas(
       continue;
     }
     const u = (await getUser(env, user.id)) ?? user;
+    // Fill at the live spot quote (consistent with the dashboard) when available.
     let entry = idea.entry;
-    try {
-      entry = (await getPrice(env, asset, 30, normalizeInterval(u.analysis_timeframe))) || idea.entry;
-    } catch {
-      /* use idea.entry */
-    }
+    const live = await getLivePrice(env, asset, 8, normalizeInterval(u.analysis_timeframe));
+    if (live != null && live > 0) entry = live;
     const res = await openPosition(env, u, asset, {
       side: idea.direction,
       entry,

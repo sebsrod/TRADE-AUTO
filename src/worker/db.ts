@@ -66,6 +66,21 @@ export async function createUser(
   return r;
 }
 
+// Permanently delete an account and everything it owns. ai_logs.user_id has no FK
+// cascade (and D1 doesn't enforce FKs by default), so every per-user table is wiped
+// explicitly in one atomic batch. Global tables (assets, market_snapshots,
+// live_quotes) are shared across users and intentionally left untouched.
+export async function deleteUserAccount(env: Env, userId: number): Promise<void> {
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM trades WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM equity_history WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM suggestions WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM ai_logs WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM users WHERE id = ?").bind(userId),
+  ]);
+}
+
 export async function ensureUser(env: Env, id: number): Promise<UserRow> {
   let user = await getUser(env, id);
   if (!user) {

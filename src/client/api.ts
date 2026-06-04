@@ -88,6 +88,7 @@ export const api = {
   updateConfig: (patch: Partial<User> & Record<string, unknown>) =>
     req<User>("/config", { method: "PATCH", body: JSON.stringify(patch) }),
   resetAccount: () => req<{ ok: boolean; user: User }>("/config/reset", { method: "POST" }),
+  deleteAccount: () => req<{ ok: boolean }>("/auth/account", { method: "DELETE" }),
 
   // assets
   getAssets: () => req<Asset[]>("/assets"),

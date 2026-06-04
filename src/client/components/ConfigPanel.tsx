@@ -16,11 +16,13 @@ export function ConfigPanel({
   busy,
   onSave,
   onReset,
+  onDelete,
 }: {
   user: User;
   busy: string | null;
   onSave: (patch: Partial<User> & Record<string, unknown>) => void;
   onReset: () => void;
+  onDelete: () => void;
 }) {
   const [risk, setRisk] = useState<RiskLevel>(user.risk_level);
   const [minHold, setMinHold] = useState(user.min_hold_hours);
@@ -165,7 +167,26 @@ export function ConfigPanel({
           }}
           disabled={busy != null}
         >
-          Reset account
+          {busy === "reset" ? "Resetting…" : "Reset account"}
+        </button>
+      </div>
+
+      <div className="danger-zone">
+        <p className="muted danger-note">
+          Permanently delete this account and all of its data (trades, equity, AI logs).
+          This cannot be undone.
+        </p>
+        <button
+          className="btn ghost danger"
+          onClick={() => {
+            if (!confirm("Permanently delete your account and ALL of its data? This cannot be undone."))
+              return;
+            const typed = prompt('Type "DELETE" to confirm permanent account deletion:');
+            if (typed?.trim().toUpperCase() === "DELETE") onDelete();
+          }}
+          disabled={busy != null}
+        >
+          {busy === "delete-account" ? "Deleting…" : "Delete account permanently"}
         </button>
       </div>
     </div>

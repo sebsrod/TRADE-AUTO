@@ -69,6 +69,18 @@
   white-space: nowrap;
 }
 
+/* ---------------- config danger zone ---------------- */
+.danger-zone {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(244, 63, 94, 0.25);
+}
+.danger-note {
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+
 /* ---------------- auth screen ---------------- */
 .auth-wrap {
   min-height: 100vh;

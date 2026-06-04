@@ -57,6 +57,7 @@ config.post("/reset", async (c) => {
     env.DB.prepare("DELETE FROM trades WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM equity_history WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM suggestions WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM ai_logs WHERE user_id = ?").bind(user.id),
     env.DB.prepare(
       "UPDATE users SET cash_balance = starting_balance, updated_at = datetime('now') WHERE id = ?",
     ).bind(user.id),
