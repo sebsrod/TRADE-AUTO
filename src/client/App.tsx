@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type HealthResponse } from "./api";
+import { api, ApiError, type HealthResponse } from "./api";
 import type {
   AILog,
   Asset,
@@ -9,21 +9,27 @@ import type {
   Trade,
   User,
 } from "../shared/types";
-import { Header } from "./components/Header";
+import { Header } from "./components/TopBar";
 import { MetricsPanel } from "./components/MetricsPanel";
 import { EquityChart } from "./components/EquityChart";
-import { PortfolioPanel } from "./components/PortfolioPanel";
+import { PositionsPanel } from "./components/PositionsPanel";
 import { ResearchHub } from "./components/ResearchHub";
 import { ConfigPanel } from "./components/ConfigPanel";
 import { AssetManager } from "./components/AssetManager";
 import { OptionsChain } from "./components/OptionsChain";
 import { TradesTable } from "./components/TradesTable";
 import { AILogsPanel } from "./components/AILogsPanel";
+import { AuthScreen } from "./components/AuthGate";
 import { Toast, type ToastMsg } from "./components/Toast";
+import "./styles-extra.css";
 
-const REFRESH_MS = 30_000;
+const REFRESH_MS = 30_000; // full dashboard reload (trades, suggestions, logs…)
+const LIVE_MS = 5_000; // fast P&L poll (positions repriced at spot)
 
 export default function App() {
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [portfolio, setPortfolio] = useState<PortfolioResponse | null>(null);
   const [equity, setEquity] = useState<EquityPoint[]>([]);
@@ -35,6 +41,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastMsg | null>(null);
+  const [liveAt, setLiveAt] = useState<string | null>(null);
+  const [liveOk, setLiveOk] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadSeq = useRef(0);
 
@@ -44,43 +52,102 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 5000);
   }, []);
 
-  const loadAll = useCallback(async (silent = false) => {
-    const seq = ++loadSeq.current;
-    if (!silent) setLoading(true);
-    try {
-      const [p, eq, sug, closed, as, logs, h] = await Promise.all([
-        api.portfolio(),
-        api.equity(),
-        api.suggestions(),
-        api.trades("closed"),
-        api.getAssets(),
-        api.aiLogs(30),
-        api.health().catch(() => null),
-      ]);
-      // Ignore this response if a newer loadAll has since been issued.
-      if (seq !== loadSeq.current) return;
-      setPortfolio(p);
-      setEquity(eq);
-      setSuggestions(sug);
-      setClosedTrades(closed);
-      setAssets(as);
-      setAILogs(logs);
-      if (h) setHealth(h);
-      setError(null);
-    } catch (e) {
-      if (seq === loadSeq.current) setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      if (seq === loadSeq.current) setLoading(false);
-    }
+  // Treat a 401 from any call as "session ended" → bounce back to the login gate.
+  const onUnauthorized = useCallback(() => {
+    setAuthUser(null);
+    setPortfolio(null);
+    setEquity([]);
+    setSuggestions([]);
+    setClosedTrades([]);
+    setAssets([]);
+    setAILogs([]);
+    setLiveOk(false);
+    setLiveAt(null);
+    setLoading(true);
   }, []);
 
+  // Check for an existing session on first load.
   useEffect(() => {
+    let cancelled = false;
+    api
+      .me()
+      .then((r) => {
+        if (!cancelled) setAuthUser(r.user);
+      })
+      .catch(() => {
+        /* not logged in */
+      })
+      .finally(() => {
+        if (!cancelled) setAuthChecked(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const loadAll = useCallback(
+    async (silent = false) => {
+      const seq = ++loadSeq.current;
+      if (!silent) setLoading(true);
+      try {
+        const [p, eq, sug, closed, as, logs, h] = await Promise.all([
+          api.portfolio(),
+          api.equity(),
+          api.suggestions(),
+          api.trades("closed"),
+          api.getAssets(),
+          api.aiLogs(30),
+          api.health().catch(() => null),
+        ]);
+        if (seq !== loadSeq.current) return;
+        setPortfolio(p);
+        setEquity(eq);
+        setSuggestions(sug);
+        setClosedTrades(closed);
+        setAssets(as);
+        setAILogs(logs);
+        if (h) setHealth(h);
+        setError(null);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) {
+          onUnauthorized();
+          return;
+        }
+        if (seq === loadSeq.current) setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (seq === loadSeq.current) setLoading(false);
+      }
+    },
+    [onUnauthorized],
+  );
+
+  // Fast poll: reprice open positions + recompute metrics so P&L moves live.
+  const loadLive = useCallback(async () => {
+    try {
+      const live = await api.portfolioLive();
+      setPortfolio((prev) =>
+        prev ? { ...prev, positions: live.positions, metrics: live.metrics } : prev,
+      );
+      setLiveAt(live.asOf);
+      setLiveOk(true);
+    } catch (e) {
+      setLiveOk(false);
+      if (e instanceof ApiError && e.status === 401) onUnauthorized();
+    }
+  }, [onUnauthorized]);
+
+  // Once authenticated: load everything + start both poll loops.
+  useEffect(() => {
+    if (!authUser) return;
     loadAll();
     const t = setInterval(() => loadAll(true), REFRESH_MS);
-    return () => clearInterval(t);
-  }, [loadAll]);
+    const lt = setInterval(() => loadLive(), LIVE_MS);
+    return () => {
+      clearInterval(t);
+      clearInterval(lt);
+    };
+  }, [authUser, loadAll, loadLive]);
 
-  // Wrap an async action: show busy state, toast result, then refresh.
   const run = useCallback(
     async (key: string, fn: () => Promise<string | void>, okKind: ToastMsg["kind"] = "success") => {
       setBusy(key);
@@ -89,13 +156,26 @@ export default function App() {
         await loadAll(true);
         if (msg) notify(msg, okKind);
       } catch (e) {
+        if (e instanceof ApiError && e.status === 401) {
+          onUnauthorized();
+          return;
+        }
         notify(e instanceof Error ? e.message : String(e), "error");
       } finally {
         setBusy(null);
       }
     },
-    [loadAll, notify],
+    [loadAll, notify, onUnauthorized],
   );
+
+  const logout = useCallback(async () => {
+    try {
+      await api.logout();
+    } catch {
+      /* clear local state regardless */
+    }
+    onUnauthorized();
+  }, [onUnauthorized]);
 
   const actions = {
     updateConfig: (patch: Partial<User> & Record<string, unknown>) =>
@@ -164,11 +244,27 @@ export default function App() {
       }),
   };
 
-  if (loading && !portfolio) {
+  // --- gate: still checking session ---
+  if (!authChecked) {
     return (
       <div className="app-loading">
         <div className="spinner" />
         <p>Loading TRADE-AUTO…</p>
+      </div>
+    );
+  }
+
+  // --- gate: not logged in ---
+  if (!authUser) {
+    return <AuthScreen onAuthed={(u) => setAuthUser(u)} />;
+  }
+
+  // --- dashboard ---
+  if (loading && !portfolio) {
+    return (
+      <div className="app-loading">
+        <div className="spinner" />
+        <p>Loading your desk…</p>
       </div>
     );
   }
@@ -178,11 +274,13 @@ export default function App() {
       <Header
         health={health}
         metrics={portfolio?.metrics ?? null}
-        user={portfolio?.user ?? null}
+        user={authUser ?? portfolio?.user ?? null}
         busy={busy}
+        live={{ ok: liveOk, at: liveAt }}
         onRefresh={() => loadAll()}
         onRunCycle={actions.runCycle}
         onDiscover={actions.discover}
+        onLogout={logout}
       />
 
       {error && <div className="banner error">⚠ {error}</div>}
@@ -198,7 +296,7 @@ export default function App() {
           {portfolio && <MetricsPanel metrics={portfolio.metrics} />}
           <EquityChart equity={equity} startingBalance={portfolio?.user.starting_balance ?? 0} />
           {portfolio && (
-            <PortfolioPanel
+            <PositionsPanel
               positions={portfolio.positions}
               busy={busy}
               onClose={actions.closeTrade}
@@ -218,7 +316,12 @@ export default function App() {
 
         <aside className="col-side">
           {portfolio && (
-            <ConfigPanel user={portfolio.user} busy={busy} onSave={actions.updateConfig} onReset={actions.resetAccount} />
+            <ConfigPanel
+              user={portfolio.user}
+              busy={busy}
+              onSave={actions.updateConfig}
+              onReset={actions.resetAccount}
+            />
           )}
           <AssetManager
             assets={assets}
@@ -235,7 +338,7 @@ export default function App() {
 
       <footer className="footer">
         TRADE-AUTO · Gemini-powered paper trading · {health?.model ?? "gemini"} ·{" "}
-        <span className="muted">data: Binance + Yahoo Finance (delayed)</span>
+        <span className="muted">data: Binance + Yahoo Finance (live)</span>
       </footer>
 
       {toast && <Toast toast={toast} onClose={() => setToast(null)} />}

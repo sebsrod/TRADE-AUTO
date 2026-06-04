@@ -3,7 +3,11 @@
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { Env } from "./types";
+import { getCookie } from "hono/cookie";
+import type { AppBindings } from "./types";
+import { getSessionUserId } from "./db";
+import { SESSION_COOKIE, hashToken } from "./services/auth";
+import auth from "./routes/auth";
 import config from "./routes/config";
 import assets from "./routes/assets";
 import market from "./routes/market";
@@ -12,11 +16,34 @@ import portfolio from "./routes/portfolio";
 import trades from "./routes/trades";
 import ai from "./routes/ai";
 
-export const app = new Hono<{ Bindings: Env }>();
+export const app = new Hono<AppBindings>();
 
 app.use("/api/*", cors());
 
-const api = new Hono<{ Bindings: Env }>();
+// Endpoints reachable without a session. Everything else requires a valid cookie.
+const PUBLIC_PATHS = new Set([
+  "/api/health",
+  "/api/auth/signup",
+  "/api/auth/login",
+  "/api/auth/logout",
+]);
+
+// Session guard: resolve the opaque cookie token → user id, or 401. Runs before the
+// API router so every protected route can trust c.get("userId").
+app.use("/api/*", async (c, next) => {
+  if (c.req.method === "OPTIONS" || PUBLIC_PATHS.has(c.req.path)) return next();
+  const token = getCookie(c, SESSION_COOKIE);
+  if (token) {
+    const userId = await getSessionUserId(c.env, await hashToken(token));
+    if (userId != null) {
+      c.set("userId", userId);
+      return next();
+    }
+  }
+  return c.json({ error: "unauthorized" }, 401);
+});
+
+const api = new Hono<AppBindings>();
 api.get("/health", (c) =>
   c.json({
     ok: true,
@@ -26,6 +53,7 @@ api.get("/health", (c) =>
     time: new Date().toISOString(),
   }),
 );
+api.route("/auth", auth);
 api.route("/config", config);
 api.route("/assets", assets);
 api.route("/market", market);

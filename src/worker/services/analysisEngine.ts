@@ -13,23 +13,25 @@ import type {
 } from "../../shared/types";
 import type { Env } from "../types";
 import {
-  defaultUserId,
   expireOldSuggestions,
   getAsset,
+  getFreshLiveQuote,
   insertAILog,
   insertEquityPoint,
   insertSuggestion,
   listAssets,
   listOpenTrades,
+  listUserIds,
+  pruneExpiredSessions,
   pruneSnapshots,
+  saveLiveQuote,
   saveSnapshot,
   getFreshSnapshot,
   getUser,
-  ensureUser,
 } from "../db";
 import { hoursBetween, round, safeJsonParse } from "../util";
 import { computeIndicators } from "./indicators";
-import { fetchMarketData, normalizeInterval } from "./marketData";
+import { fetchMarketData, fetchQuote, normalizeInterval } from "./marketData";
 import { analyzeAsset as geminiAnalyze, discoverOpportunities } from "./gemini";
 import {
   canCloseNow,
@@ -109,7 +111,66 @@ export async function getPrice(
   return snap.price;
 }
 
-// Enrich open trades with live price + unrealized PnL + guardrail state.
+// Latest spot price for live P&L. Serves a few-seconds cache, then a fresh quote
+// (persisted to the cache), and only falls back to the heavier snapshot price if the
+// quote feed is unreachable — so the number is always as live as the data allows.
+export async function getLivePrice(
+  env: Env,
+  asset: Asset,
+  maxAgeSeconds = 8,
+  snapshotTf: Timeframe = "1d",
+): Promise<number | null> {
+  const cached = await getFreshLiveQuote(env, asset.id, maxAgeSeconds);
+  if (cached != null) return cached;
+  try {
+    const q = await fetchQuote(asset, env);
+    await saveLiveQuote(env, {
+      asset_id: asset.id,
+      symbol: asset.symbol,
+      price: q.price,
+      source: q.source,
+    });
+    return q.price;
+  } catch {
+    // Quote feed down: use any recent cached quote (up to 1h), then the snapshot.
+    const stale = await getFreshLiveQuote(env, asset.id, 3600);
+    if (stale != null) return stale;
+    try {
+      return await getPrice(env, asset, 60, snapshotTf);
+    } catch {
+      return null;
+    }
+  }
+}
+
+// Assemble an OpenPosition from a trade + a (possibly null) current price.
+function buildPosition(t: Trade, price: number | null, user: User): OpenPosition {
+  const holdHours = round(hoursBetween(t.entry_time), 2);
+  if (price == null) {
+    return {
+      ...t,
+      current_price: null,
+      unrealized_pnl: null,
+      unrealized_pnl_pct: null,
+      market_value: t.position_value,
+      hold_hours: holdHours,
+      can_close: canCloseNow(t, user),
+    };
+  }
+  const uPnl = unrealizedPnl(t, price);
+  return {
+    ...t,
+    current_price: price,
+    unrealized_pnl: uPnl,
+    unrealized_pnl_pct: t.position_value > 0 ? round((uPnl / t.position_value) * 100, 2) : 0,
+    market_value: round(t.position_value + uPnl, 2),
+    hold_hours: holdHours,
+    can_close: canCloseNow(t, user),
+  };
+}
+
+// Enrich open trades with price + unrealized PnL + guardrail state, using the
+// snapshot cache (up to ~60min old) — fine for the full dashboard load.
 export async function enrichPositions(
   env: Env,
   user: User,
@@ -125,31 +186,32 @@ export async function enrichPositions(
     } catch {
       price = null;
     }
-    const holdHours = round(hoursBetween(t.entry_time), 2);
-    if (price == null) {
-      out.push({
-        ...t,
-        current_price: null,
-        unrealized_pnl: null,
-        unrealized_pnl_pct: null,
-        market_value: t.position_value,
-        hold_hours: holdHours,
-        can_close: canCloseNow(t, user),
-      });
-      continue;
-    }
-    const uPnl = unrealizedPnl(t, price);
-    out.push({
-      ...t,
-      current_price: price,
-      unrealized_pnl: uPnl,
-      unrealized_pnl_pct: t.position_value > 0 ? round((uPnl / t.position_value) * 100, 2) : 0,
-      market_value: round(t.position_value + uPnl, 2),
-      hold_hours: holdHours,
-      can_close: canCloseNow(t, user),
-    });
+    out.push(buildPosition(t, price, user));
   }
   return out;
+}
+
+// Same, but priced at the live spot quote (few-seconds freshness) and fetched in
+// parallel — powers the fast P&L poll where the numbers must actually move.
+export async function enrichPositionsLive(
+  env: Env,
+  user: User,
+  trades: Trade[],
+): Promise<OpenPosition[]> {
+  const tf = normalizeInterval(user.analysis_timeframe);
+  const priced = await Promise.all(
+    trades.map(async (t) => {
+      let price: number | null = null;
+      try {
+        const asset = await getAsset(env, t.asset_id);
+        if (asset) price = await getLivePrice(env, asset, 8, tf);
+      } catch {
+        price = null;
+      }
+      return buildPosition(t, price, user);
+    }),
+  );
+  return priced;
 }
 
 export async function recordEquity(
@@ -391,11 +453,14 @@ export interface CronSummary {
   errors: string[];
 }
 
-// The full scheduled cycle invoked by the cron trigger.
-export async function runCronCycle(env: Env): Promise<CronSummary> {
+// The full scheduled cycle for a single user (management + discovery + auto-trade
+// + bookkeeping). Invoked per-user by the cron driver and by manual /run-cycle.
+export async function runCronCycle(env: Env, userId: number): Promise<CronSummary> {
   const errors: string[] = [];
-  const userId = defaultUserId(env);
-  const user = await ensureUser(env, userId);
+  const user = await getUser(env, userId);
+  if (!user) {
+    return { closedByStops: 0, suggestions: 0, autoOpened: 0, errors: [`user ${userId} not found`] };
+  }
 
   let closedByStops = 0;
   try {
@@ -438,6 +503,35 @@ export async function runCronCycle(env: Env): Promise<CronSummary> {
   }
 
   return { closedByStops, suggestions, autoOpened, errors };
+}
+
+export interface AllUsersCronSummary {
+  users: number;
+  totals: CronSummary;
+}
+
+// Cron entry point: run each credentialed user's cycle and aggregate the results.
+// One user's failure never aborts the others. Also prunes expired sessions.
+export async function runCronCycleAllUsers(env: Env): Promise<AllUsersCronSummary> {
+  const ids = await listUserIds(env);
+  const totals: CronSummary = { closedByStops: 0, suggestions: 0, autoOpened: 0, errors: [] };
+  for (const id of ids) {
+    try {
+      const s = await runCronCycle(env, id);
+      totals.closedByStops += s.closedByStops;
+      totals.suggestions += s.suggestions;
+      totals.autoOpened += s.autoOpened;
+      for (const e of s.errors) totals.errors.push(`user ${id}: ${e}`);
+    } catch (e) {
+      totals.errors.push(`user ${id}: ${msg(e)}`);
+    }
+  }
+  try {
+    await pruneExpiredSessions(env);
+  } catch {
+    // best-effort cleanup
+  }
+  return { users: ids.length, totals };
 }
 
 function msg(e: unknown): string {

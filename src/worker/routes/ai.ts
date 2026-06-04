@@ -1,9 +1,7 @@
 import { Hono } from "hono";
-import type { Env } from "../types";
+import type { AppBindings } from "../types";
 import type { TradeSide } from "../../shared/types";
 import {
-  defaultUserId,
-  ensureUser,
   getAsset,
   getSuggestion,
   getUser,
@@ -22,7 +20,7 @@ import {
   runDiscovery,
 } from "../services/analysisEngine";
 
-const ai = new Hono<{ Bindings: Env }>();
+const ai = new Hono<AppBindings>();
 
 // Recent Gemini analysis logs.
 ai.get("/logs", async (c) => {
@@ -34,7 +32,8 @@ ai.get("/logs", async (c) => {
 
 // Discovered "Suggested Assets to Trade".
 ai.get("/suggestions", async (c) => {
-  const user = await ensureUser(c.env, defaultUserId(c.env));
+  const user = await getUser(c.env, c.get("userId"));
+  if (!user) return c.json({ error: "unauthorized" }, 401);
   const status = c.req.query("status") ?? undefined;
   const list = await listSuggestions(c.env, user.id, { status });
   return c.json(list);
@@ -42,7 +41,8 @@ ai.get("/suggestions", async (c) => {
 
 // Run a deep per-asset analysis. Pass {"execute": true} to act on the decision.
 ai.post("/analyze/:assetId", async (c) => {
-  const user = await ensureUser(c.env, defaultUserId(c.env));
+  const user = await getUser(c.env, c.get("userId"));
+  if (!user) return c.json({ error: "unauthorized" }, 401);
   const id = parseInt(c.req.param("assetId"), 10);
   const asset = await getAsset(c.env, id);
   if (!asset) return c.json({ error: "asset not found" }, 404);
@@ -58,7 +58,8 @@ ai.post("/analyze/:assetId", async (c) => {
 
 // Run the market-discovery scan now.
 ai.post("/discover", async (c) => {
-  const user = await ensureUser(c.env, defaultUserId(c.env));
+  const user = await getUser(c.env, c.get("userId"));
+  if (!user) return c.json({ error: "unauthorized" }, 401);
   const maxIdeas = parseInt(c.req.query("maxIdeas") ?? "5", 10);
   try {
     const result = await runDiscovery(c.env, user, Number.isFinite(maxIdeas) ? maxIdeas : 5);
@@ -69,10 +70,10 @@ ai.post("/discover", async (c) => {
   }
 });
 
-// Manually trigger the full scheduled cycle (management + discovery + auto-trade).
+// Manually trigger the full scheduled cycle for the current user.
 ai.post("/run-cycle", async (c) => {
   try {
-    const summary = await runCronCycle(c.env);
+    const summary = await runCronCycle(c.env, c.get("userId"));
     return c.json(summary);
   } catch (e) {
     return c.json({ error: "cycle failed", detail: e instanceof Error ? e.message : String(e) }, 502);
@@ -81,7 +82,8 @@ ai.post("/run-cycle", async (c) => {
 
 // Approve a suggestion → open a paper position from it.
 ai.post("/suggestions/:id/approve", async (c) => {
-  const user = await ensureUser(c.env, defaultUserId(c.env));
+  const user = await getUser(c.env, c.get("userId"));
+  if (!user) return c.json({ error: "unauthorized" }, 401);
   const id = parseInt(c.req.param("id"), 10);
   const sug = await getSuggestion(c.env, id);
   if (!sug || sug.user_id !== user.id) return c.json({ error: "suggestion not found" }, 404);
@@ -120,7 +122,8 @@ ai.post("/suggestions/:id/approve", async (c) => {
 
 // Reject a suggestion.
 ai.post("/suggestions/:id/reject", async (c) => {
-  const user = await ensureUser(c.env, defaultUserId(c.env));
+  const user = await getUser(c.env, c.get("userId"));
+  if (!user) return c.json({ error: "unauthorized" }, 401);
   const id = parseInt(c.req.param("id"), 10);
   const sug = await getSuggestion(c.env, id);
   if (!sug || sug.user_id !== user.id) return c.json({ error: "suggestion not found" }, 404);

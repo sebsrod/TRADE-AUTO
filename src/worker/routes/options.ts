@@ -1,9 +1,9 @@
 import { Hono } from "hono";
-import type { Env } from "../types";
+import type { AppBindings } from "../types";
 import { fetchOptionChain } from "../services/marketData";
 import { insertAsset } from "../db";
 
-const options = new Hono<{ Bindings: Env }>();
+const options = new Hono<AppBindings>();
 
 // GET the option chain for an underlying symbol.
 // ?expiration=<epochMs> selects a specific expiry (defaults to the nearest).

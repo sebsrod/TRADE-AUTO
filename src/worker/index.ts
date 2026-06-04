@@ -4,14 +4,14 @@
 
 import app from "./app";
 import type { Env } from "./types";
-import { runCronCycle } from "./services/analysisEngine";
+import { runCronCycleAllUsers } from "./services/analysisEngine";
 
 export default {
   fetch: app.fetch,
 
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(
-      runCronCycle(env)
+      runCronCycleAllUsers(env)
         .then((summary) => console.log("cron cycle complete:", JSON.stringify(summary)))
         .catch((err) => console.error("cron cycle failed:", err)),
     );

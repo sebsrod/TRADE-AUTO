@@ -3,10 +3,12 @@
 import type {
   AILog,
   Asset,
+  AuthResponse,
   Candle,
   EquityPoint,
   GeminiDiscovery,
   Indicators,
+  LivePortfolio,
   OptionChain,
   PortfolioResponse,
   Suggestion,
@@ -15,16 +17,32 @@ import type {
   User,
 } from "../shared/types";
 
+// Error carrying the HTTP status so callers can special-case 401 (session expired).
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
     ...init,
   });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
   if (!res.ok) {
     const detail = data?.detail ? ` — ${data.detail}` : "";
-    throw new Error((data?.error || `HTTP ${res.status}`) + detail);
+    throw new ApiError((data?.error || `HTTP ${res.status}`) + detail, res.status);
   }
   return data as T;
 }
@@ -57,6 +75,14 @@ export interface DiscoverResponse {
 export const api = {
   health: () => req<HealthResponse>("/health"),
 
+  // auth
+  me: () => req<AuthResponse>("/auth/me"),
+  signup: (b: { name: string; email: string; password: string }) =>
+    req<AuthResponse>("/auth/signup", { method: "POST", body: JSON.stringify(b) }),
+  login: (b: { email: string; password: string }) =>
+    req<AuthResponse>("/auth/login", { method: "POST", body: JSON.stringify(b) }),
+  logout: () => req<{ ok: boolean }>("/auth/logout", { method: "POST", body: "{}" }),
+
   // config
   getConfig: () => req<User>("/config"),
   updateConfig: (patch: Partial<User> & Record<string, unknown>) =>
@@ -86,6 +112,7 @@ export const api = {
 
   // portfolio / metrics
   portfolio: () => req<PortfolioResponse>("/portfolio"),
+  portfolioLive: () => req<LivePortfolio>("/portfolio/live"),
   equity: () => req<EquityPoint[]>("/portfolio/equity"),
 
   // trades
