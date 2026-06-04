@@ -1,6 +1,6 @@
 // Authentication primitives — all keyless, built on the Workers WebCrypto API.
 //
-// Passwords: PBKDF2-HMAC-SHA256 (210k iterations, per-user 16-byte salt), stored as
+// Passwords: PBKDF2-HMAC-SHA256 (100k iterations, per-user 16-byte salt), stored as
 // base64 of the derived 256-bit key. Sessions: 256-bit random opaque tokens; only the
 // SHA-256 hash is stored in D1, the raw token lives in an HttpOnly cookie. There is no
 // server-side secret to manage — security rests on the CSPRNG token + hashed-at-rest.
@@ -8,7 +8,10 @@
 import type { UserRow } from "../types";
 import type { User } from "../../shared/types";
 
-const PBKDF2_ITERATIONS = 210_000;
+// The Cloudflare Workers (workerd) runtime hard-caps PBKDF2 at 100,000 iterations
+// and rejects anything higher at runtime ("iteration counts above 100000 are not
+// supported"). This is the maximum allowed; there is no compatibility flag to lift it.
+const PBKDF2_ITERATIONS = 100_000;
 const SALT_BYTES = 16;
 const KEY_BITS = 256;
 const TOKEN_BYTES = 32;
