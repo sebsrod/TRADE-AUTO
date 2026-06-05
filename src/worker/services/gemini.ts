@@ -4,10 +4,12 @@
 import type {
   AIDecision,
   Asset,
+  ChatMessage,
   GeminiDecision,
   GeminiDiscovery,
   Indicators,
   RiskLevel,
+  Timeframe,
   User,
 } from "../../shared/types";
 import type { Env } from "../types";
@@ -32,6 +34,14 @@ function riskGuidance(level: RiskLevel): string {
     default:
       return "Balanced: solid setups with clear confluence, reward:risk >= 1.5, risking ~2% of capital.";
   }
+}
+
+// The user's own description of how they want to trade. When present it is an
+// explicit, high-priority instruction that shapes every open/close decision.
+function styleBlock(user: User): string {
+  const notes = (user.strategy_notes ?? "").trim();
+  if (!notes) return "";
+  return `\nTrader's personal style & standing instructions (HIGH PRIORITY — follow unless they violate a hard risk guardrail):\n"""${notes.slice(0, 1500)}"""\n`;
 }
 
 // Extract a JSON value from model text that may be fenced or prefixed.
@@ -63,7 +73,7 @@ async function callGemini(
   env: Env,
   model: string,
   prompt: string,
-  opts: { grounding?: boolean; temperature?: number; maxTokens?: number } = {},
+  opts: { grounding?: boolean; temperature?: number; maxTokens?: number; plainText?: boolean } = {},
 ): Promise<GeminiRawCall> {
   if (!env.GEMINI_API_KEY) {
     throw new Error(
@@ -81,8 +91,9 @@ async function callGemini(
       // maxOutputTokens; disable thinking so the whole budget goes to the JSON
       // answer (this is structured extraction, not open-ended reasoning).
       thinkingConfig: { thinkingBudget: 0 },
-      // JSON mode and the google_search tool can conflict; only force JSON when not grounding.
-      ...(grounded ? {} : { responseMimeType: "application/json" }),
+      // JSON mode conflicts with the google_search tool and with free-form chat;
+      // only force JSON for structured extraction (not grounded, not plain-text).
+      ...(grounded || opts.plainText ? {} : { responseMimeType: "application/json" }),
     },
   };
   if (grounded) body.tools = [{ google_search: {} }];
@@ -152,6 +163,7 @@ export async function analyzeAsset(
   ind: Indicators,
   recentCloses: number[],
   hasOpenPosition: boolean,
+  timeframe: Timeframe = "1d",
 ): Promise<{ decision: GeminiDecision; raw: GeminiRawCall }> {
   const model = user.gemini_model || env.GEMINI_MODEL || "gemini-2.5-flash";
   const grounding = (env.ENABLE_SEARCH_GROUNDING || "false") === "true";
@@ -166,8 +178,8 @@ Account: cash=$${fmt(user.cash_balance)}, min hold time = ${user.min_hold_hours}
     user.allow_shorting ? "ALLOWED" : "NOT allowed"
   }.
 Open position currently: ${hasOpenPosition ? "YES (you may HOLD or CLOSE)" : "NO (you may BUY, SELL/short, or HOLD)"}
-
-Technical snapshot (daily): ${indicatorBlock(ind)}
+${styleBlock(user)}
+Technical snapshot (${timeframe} candles): ${indicatorBlock(ind)}
 Recent closes (oldest→newest): ${closesStr}
 
 Rules:
@@ -239,8 +251,8 @@ identify the strongest "trend swing" / structural-shift opportunities right now.
 
 Risk profile: ${user.risk_level} — ${riskGuidance(user.risk_level)}
 Shorting: ${user.allow_shorting ? "allowed" : "not allowed (long-only ideas)"}
-
-Universe (daily indicators):
+${styleBlock(user)}
+Universe (indicators):
 ${table}
 
 Return strict JSON with:
@@ -285,4 +297,75 @@ Respond with ONLY the JSON object.`;
     ideas,
     raw,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Conversational copilot. The user can ask for analysis of specific assets and
+// describe how they want to trade; when they express a durable style preference
+// the model returns a `strategyUpdate` the UI can one-click apply.
+// ---------------------------------------------------------------------------
+export interface ChatResult {
+  reply: string;
+  strategyUpdate: string | null;
+  raw: GeminiRawCall;
+}
+
+const STRATEGY_TAG = "STRATEGY_UPDATE:";
+
+export async function chatWithGemini(
+  env: Env,
+  user: User,
+  history: ChatMessage[],
+  userMessage: string,
+  contextBlocks: string[],
+): Promise<ChatResult> {
+  const model = user.gemini_model || env.GEMINI_MODEL || "gemini-2.5-flash";
+  const grounding = (env.ENABLE_SEARCH_GROUNDING || "false") === "true";
+
+  const convo = history
+    .slice(-12)
+    .map((m) => `${m.role === "assistant" ? "Assistant" : "User"}: ${m.content}`)
+    .join("\n");
+  const context = contextBlocks.length
+    ? `\nLive market context (use it; do not invent numbers):\n${contextBlocks.join("\n")}\n`
+    : "";
+
+  const prompt = `You are Gemini, the trading copilot inside TRADE-AUTO — a Gemini-powered PAPER-trading desk.
+You help the user analyze assets, explain the desk's automated decisions, and refine their trading strategy.
+Be concise, concrete and practical (a few short paragraphs or bullets at most). Ground every claim in the
+provided technical context and the user's stated style. This is paper trading, so specific actionable trade
+reasoning is welcome, but never claim certainty about the future — always frame ideas as risk/reward.
+
+Trader's risk profile: ${user.risk_level} — ${riskGuidance(user.risk_level)}
+Account: cash=$${fmt(user.cash_balance)}, shorting ${user.allow_shorting ? "allowed" : "disabled"}, analysis timeframe ${user.analysis_timeframe}.
+${styleBlock(user) || "The trader has not described a personal style yet.\n"}${context}
+If — and ONLY if — the user is describing a DURABLE change to how they want the desk to trade (their style,
+preferences, rules, what to favor or avoid), end your reply with exactly one final line:
+${STRATEGY_TAG} <one self-contained paragraph capturing their FULL updated trading style, ready to store verbatim>
+Do NOT include that line for ordinary questions or one-off analysis requests.
+
+Conversation so far:
+${convo ? convo + "\n" : ""}User: ${userMessage}
+Assistant:`;
+
+  const raw = await callGemini(env, model, prompt, {
+    grounding,
+    plainText: true,
+    temperature: 0.6,
+    maxTokens: 1536,
+  });
+
+  // Split a trailing STRATEGY_UPDATE: line out of the visible reply. The tag must
+  // START a line (anchored) so a mid-sentence mention of it in ordinary prose can't
+  // truncate the answer or fabricate a strategy update.
+  let reply = raw.text.trim();
+  let strategyUpdate: string | null = null;
+  const m = reply.match(/(?:^|\n)[ \t]*STRATEGY_UPDATE:[ \t]*([\s\S]*)$/);
+  if (m && m.index != null) {
+    const after = (m[1] ?? "").trim();
+    if (after) strategyUpdate = after.slice(0, 1500);
+    reply = reply.slice(0, m.index).trim();
+  }
+  if (!reply) reply = strategyUpdate ? "Got it — I've drafted an updated strategy for you to review." : raw.text.trim();
+  return { reply, strategyUpdate, raw };
 }

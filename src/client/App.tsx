@@ -3,7 +3,9 @@ import { api, ApiError, type HealthResponse } from "./api";
 import type {
   AILog,
   Asset,
+  ChatMessage,
   EquityPoint,
+  OpenPosition,
   PortfolioResponse,
   Suggestion,
   Trade,
@@ -12,8 +14,10 @@ import type {
 import { Header } from "./components/TopBar";
 import { MetricsPanel } from "./components/MetricsPanel";
 import { EquityChart } from "./components/EquityChart";
+import { AssetChartPanel } from "./components/AssetChartPanel";
 import { PositionsPanel } from "./components/PositionsPanel";
 import { ResearchHub } from "./components/ResearchHub";
+import { ChatPanel } from "./components/ChatPanel";
 import { ConfigPanel } from "./components/ConfigPanel";
 import { AssetManager } from "./components/AssetManager";
 import { OptionsChain } from "./components/OptionsChain";
@@ -43,7 +47,17 @@ export default function App() {
   const [toast, setToast] = useState<ToastMsg | null>(null);
   const [liveAt, setLiveAt] = useState<string | null>(null);
   const [liveOk, setLiveOk] = useState(false);
+  // Asset/trade the chart + reason panel are focused on (set by clicking a row).
+  // We store only the trade id and re-derive the live object each render, so the
+  // reason panel tracks repricing and the open→closed transition automatically.
+  const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  // Chat with Gemini.
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatSending, setChatSending] = useState(false);
+  const [strategyUpdate, setStrategyUpdate] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chartRef = useRef<HTMLDivElement>(null);
   const loadSeq = useRef(0);
 
   const notify = useCallback((message: string, kind: ToastMsg["kind"] = "info") => {
@@ -61,6 +75,10 @@ export default function App() {
     setClosedTrades([]);
     setAssets([]);
     setAILogs([]);
+    setChatMessages([]);
+    setStrategyUpdate(null);
+    setSelectedId(null);
+    setSelectedAssetId(null);
     setLiveOk(false);
     setLiveAt(null);
     setLoading(true);
@@ -90,13 +108,14 @@ export default function App() {
       const seq = ++loadSeq.current;
       if (!silent) setLoading(true);
       try {
-        const [p, eq, sug, closed, as, logs, h] = await Promise.all([
+        const [p, eq, sug, closed, as, logs, chat, h] = await Promise.all([
           api.portfolio(),
           api.equity(),
           api.suggestions(),
           api.trades("closed"),
           api.getAssets(),
           api.aiLogs(30),
+          api.chatHistory().catch(() => [] as ChatMessage[]),
           api.health().catch(() => null),
         ]);
         if (seq !== loadSeq.current) return;
@@ -106,6 +125,7 @@ export default function App() {
         setClosedTrades(closed);
         setAssets(as);
         setAILogs(logs);
+        setChatMessages(chat);
         if (h) setHealth(h);
         setError(null);
       } catch (e) {
@@ -176,6 +196,84 @@ export default function App() {
     }
     onUnauthorized();
   }, [onUnauthorized]);
+
+  // --- chart / trade focus ---
+  const selectTrade = useCallback((t: Trade | OpenPosition) => {
+    setSelectedId(t.id);
+    setSelectedAssetId(t.asset_id);
+    requestAnimationFrame(() =>
+      chartRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    );
+  }, []);
+
+  // Picking a different asset from the chart dropdown drops the focused trade.
+  const pickAsset = useCallback((assetId: number) => {
+    setSelectedAssetId(assetId);
+    setSelectedId(null);
+  }, []);
+
+  // --- chat with Gemini ---
+  const sendChat = useCallback(
+    async (message: string) => {
+      if (chatSending) return;
+      setChatSending(true);
+      setStrategyUpdate(null);
+      const sym = assets.find((a) => a.id === selectedAssetId)?.symbol ?? null;
+      const optimistic: ChatMessage = {
+        id: -Date.now(),
+        user_id: authUser?.id ?? 0,
+        role: "user",
+        content: message,
+        asset_symbol: sym,
+        model: null,
+        created_at: new Date().toISOString(),
+      };
+      setChatMessages((m) => [...m, optimistic]);
+      try {
+        const res = await api.sendChat(message, sym);
+        setChatMessages(await api.chatHistory());
+        setStrategyUpdate(res.strategyUpdate);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) {
+          onUnauthorized();
+          return;
+        }
+        notify(e instanceof Error ? e.message : String(e), "error");
+        try {
+          setChatMessages(await api.chatHistory());
+        } catch {
+          /* keep the optimistic message on screen */
+        }
+      } finally {
+        setChatSending(false);
+      }
+    },
+    [assets, selectedAssetId, authUser, chatSending, notify, onUnauthorized],
+  );
+
+  const clearChat = useCallback(async () => {
+    try {
+      await api.clearChat();
+      setChatMessages([]);
+      setStrategyUpdate(null);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        onUnauthorized();
+        return;
+      }
+      notify(e instanceof Error ? e.message : String(e), "error");
+    }
+  }, [notify, onUnauthorized]);
+
+  const applyStrategy = useCallback(
+    (notes: string) =>
+      run("config", async () => {
+        await api.updateConfig({ strategy_notes: notes });
+        setStrategyUpdate(null);
+        return "Trading style updated — Gemini will apply it from now on.";
+      }),
+    [run],
+  );
 
   const actions = {
     updateConfig: (patch: Partial<User> & Record<string, unknown>) =>
@@ -284,6 +382,16 @@ export default function App() {
     );
   }
 
+  // Re-derive the focused trade from the latest data so it reprices live and
+  // follows a position through its open→closed transition (open list → history).
+  const openPositions = portfolio?.positions ?? [];
+  const selectedTrade: Trade | OpenPosition | null =
+    selectedId == null
+      ? null
+      : openPositions.find((p) => p.id === selectedId) ??
+        closedTrades.find((t) => t.id === selectedId) ??
+        null;
+
   return (
     <div className="app">
       <Header
@@ -308,13 +416,26 @@ export default function App() {
 
       <main className="grid">
         <section className="col-main">
+          <div ref={chartRef}>
+            <AssetChartPanel
+              assets={assets}
+              positions={portfolio?.positions ?? []}
+              assetId={selectedAssetId}
+              overlayTrade={selectedTrade}
+              defaultTimeframe={portfolio?.user.analysis_timeframe ?? "1d"}
+              onPickAsset={pickAsset}
+              onUnauthorized={onUnauthorized}
+            />
+          </div>
           {portfolio && <MetricsPanel metrics={portfolio.metrics} />}
           <EquityChart equity={equity} startingBalance={portfolio?.user.starting_balance ?? 0} />
           {portfolio && (
             <PositionsPanel
               positions={portfolio.positions}
               busy={busy}
+              selectedId={selectedId}
               onClose={actions.closeTrade}
+              onSelect={selectTrade}
             />
           )}
           <ResearchHub
@@ -325,11 +446,25 @@ export default function App() {
             onReject={actions.reject}
             onDiscover={actions.discover}
           />
-          <TradesTable trades={closedTrades} />
+          <TradesTable
+            trades={closedTrades}
+            selectedId={selectedId}
+            onSelect={selectTrade}
+          />
           <AILogsPanel logs={aiLogs} />
         </section>
 
         <aside className="col-side">
+          <ChatPanel
+            messages={chatMessages}
+            sending={chatSending}
+            geminiOnline={!!health?.geminiConfigured}
+            strategyUpdate={strategyUpdate}
+            onSend={sendChat}
+            onClear={clearChat}
+            onApplyStrategy={applyStrategy}
+            onDismissStrategy={() => setStrategyUpdate(null)}
+          />
           {portfolio && (
             <ConfigPanel
               user={portfolio.user}

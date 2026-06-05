@@ -3,6 +3,7 @@
 import type {
   AILog,
   Asset,
+  ChatMessage,
   EquityPoint,
   Suggestion,
   Trade,
@@ -76,6 +77,7 @@ export async function deleteUserAccount(env: Env, userId: number): Promise<void>
     env.DB.prepare("DELETE FROM equity_history WHERE user_id = ?").bind(userId),
     env.DB.prepare("DELETE FROM suggestions WHERE user_id = ?").bind(userId),
     env.DB.prepare("DELETE FROM ai_logs WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM chat_messages WHERE user_id = ?").bind(userId),
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId),
     env.DB.prepare("DELETE FROM users WHERE id = ?").bind(userId),
   ]);
@@ -174,6 +176,7 @@ const USER_FIELDS = [
   "allow_shorting",
   "gemini_model",
   "analysis_timeframe",
+  "strategy_notes",
 ];
 
 export async function updateUser(
@@ -460,15 +463,21 @@ export async function insertTrade(
 export async function closeTradeRow(
   env: Env,
   id: number,
-  c: { exit_price: number; pnl: number; pnl_pct: number; exit_reason: string },
+  c: {
+    exit_price: number;
+    pnl: number;
+    pnl_pct: number;
+    exit_reason: string;
+    exit_rationale?: string | null;
+  },
 ): Promise<Trade | null> {
   const r = await env.DB.prepare(
     `UPDATE trades
        SET status = 'closed', exit_price = ?, exit_time = datetime('now'),
-           pnl = ?, pnl_pct = ?, exit_reason = ?, updated_at = datetime('now')
+           pnl = ?, pnl_pct = ?, exit_reason = ?, exit_rationale = ?, updated_at = datetime('now')
      WHERE id = ? AND status = 'open'`,
   )
-    .bind(c.exit_price, c.pnl, c.pnl_pct, c.exit_reason, id)
+    .bind(c.exit_price, c.pnl, c.pnl_pct, c.exit_reason, c.exit_rationale ?? null, id)
     .run();
   if ((r.meta?.changes ?? 0) !== 1) return null;
   return getTrade(env, id);
@@ -667,4 +676,46 @@ export async function listEquityHistory(
     .bind(userId, limit)
     .all<EquityPoint>();
   return r.results ?? [];
+}
+
+// --------------------------- chat_messages ---------------------------
+export async function insertChatMessage(
+  env: Env,
+  m: {
+    user_id: number;
+    role: "user" | "assistant";
+    content: string;
+    asset_symbol?: string | null;
+    model?: string | null;
+  },
+): Promise<ChatMessage> {
+  const r = await env.DB.prepare(
+    `INSERT INTO chat_messages (user_id, role, content, asset_symbol, model)
+     VALUES (?, ?, ?, ?, ?)
+     RETURNING *`,
+  )
+    .bind(m.user_id, m.role, m.content, m.asset_symbol ?? null, m.model ?? null)
+    .first<ChatMessage>();
+  if (!r) throw new Error("Failed to insert chat message");
+  return r;
+}
+
+// Most recent messages for a user, returned oldest→newest (chat reading order).
+export async function listChatMessages(
+  env: Env,
+  userId: number,
+  limit = 50,
+): Promise<ChatMessage[]> {
+  const r = await env.DB.prepare(
+    `SELECT * FROM (
+       SELECT * FROM chat_messages WHERE user_id = ? ORDER BY id DESC LIMIT ?
+     ) ORDER BY id ASC`,
+  )
+    .bind(userId, Math.min(Math.max(1, limit), 200))
+    .all<ChatMessage>();
+  return r.results ?? [];
+}
+
+export async function deleteChatMessages(env: Env, userId: number): Promise<void> {
+  await env.DB.prepare("DELETE FROM chat_messages WHERE user_id = ?").bind(userId).run();
 }

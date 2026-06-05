@@ -286,6 +286,7 @@ export async function analyzeOneAsset(
     snap.indicators,
     snap.candles.map((c) => c.c),
     !!openTrade,
+    tf,
   );
 
   const aiLogId = await insertAILog(env, {
@@ -316,7 +317,9 @@ export async function analyzeOneAsset(
     // live_quotes write on read-only analyses (execute=false).
     const fillPrice = (await getLivePrice(env, asset, 8, tf)) ?? snap.price;
     if ((decision.decision === "CLOSE" || decision.decision === "SELL") && openTrade) {
-      const res = await closePosition(env, u, openTrade, fillPrice, "ai_signal");
+      const res = await closePosition(env, u, openTrade, fillPrice, "ai_signal", {
+        rationale: decision.rationale,
+      });
       action = res.ok ? "closed" : `skip_close:${res.reason}`;
     } else if (decision.decision === "BUY" || decision.decision === "SELL") {
       if (decision.confidence >= AUTO_TRADE_MIN_CONFIDENCE && !openTrade) {

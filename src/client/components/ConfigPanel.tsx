@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import type { RiskLevel, Timeframe, User } from "../../shared/types";
+import { TIMEFRAMES } from "../../shared/types";
 import { fmtCurrency } from "../lib/format";
-
-const TIMEFRAMES: Timeframe[] = ["1h", "4h", "1d"];
 
 const RISK_INFO: Record<RiskLevel, string> = {
   low: "1% risk / trade",
@@ -32,6 +31,7 @@ export function ConfigPanel({
   const [allowShort, setAllowShort] = useState(user.allow_shorting === 1);
   const [model, setModel] = useState(user.gemini_model ?? "");
   const [timeframe, setTimeframe] = useState<Timeframe>(user.analysis_timeframe ?? "1d");
+  const [notes, setNotes] = useState(user.strategy_notes ?? "");
 
   // Re-sync when the server state changes (e.g. after reset).
   useEffect(() => {
@@ -43,6 +43,7 @@ export function ConfigPanel({
     setAllowShort(user.allow_shorting === 1);
     setModel(user.gemini_model ?? "");
     setTimeframe(user.analysis_timeframe ?? "1d");
+    setNotes(user.strategy_notes ?? "");
   }, [user]);
 
   const dirty =
@@ -53,6 +54,7 @@ export function ConfigPanel({
     autoTrade !== (user.auto_trade_enabled === 1) ||
     allowShort !== (user.allow_shorting === 1) ||
     timeframe !== (user.analysis_timeframe ?? "1d") ||
+    notes.trim() !== (user.strategy_notes ?? "").trim() ||
     (model || null) !== (user.gemini_model || null);
 
   const save = () =>
@@ -65,6 +67,7 @@ export function ConfigPanel({
       allow_shorting: allowShort ? 1 : 0,
       gemini_model: model || null,
       analysis_timeframe: timeframe,
+      strategy_notes: notes.trim() ? notes.trim() : null,
     });
 
   return (
@@ -88,8 +91,8 @@ export function ConfigPanel({
         ))}
       </div>
 
-      <label className="field-label">Analysis timeframe</label>
-      <div className="segmented">
+      <label className="field-label">Analysis timeframe (drives AI decisions)</label>
+      <div className="segmented wrap">
         {TIMEFRAMES.map((tf) => (
           <button
             key={tf}
@@ -138,6 +141,19 @@ export function ConfigPanel({
           />
         </div>
       </div>
+
+      <label className="field-label">My trading style / instructions for the AI</label>
+      <textarea
+        className="strategy-textarea"
+        placeholder="e.g. I favor momentum swing trades on large-cap crypto, hold 2–5 days, avoid options and earnings, scale out at +1R. The AI folds this into every open/close decision."
+        value={notes}
+        rows={4}
+        maxLength={2000}
+        onChange={(e) => setNotes(e.target.value)}
+      />
+      <span className="sub strategy-hint">
+        Applied to every analysis, discovery scan and chat. You can also tell Gemini in chat and apply its draft here.
+      </span>
 
       <label className="field-label">Gemini model (optional override)</label>
       <input

@@ -1,12 +1,20 @@
 import type { Trade } from "../../shared/types";
 import { fmtCurrency, fmtNum, fmtPct, pnlClass, timeAgo, titleCase } from "../lib/format";
 
-export function TradesTable({ trades }: { trades: Trade[] }) {
+export function TradesTable({
+  trades,
+  selectedId,
+  onSelect,
+}: {
+  trades: Trade[];
+  selectedId?: number | null;
+  onSelect: (t: Trade) => void;
+}) {
   return (
     <div className="card">
       <div className="card-head">
         <h2>Trade history</h2>
-        <span className="muted">{trades.length} closed</span>
+        <span className="muted">{trades.length} closed · click for chart &amp; reason</span>
       </div>
       {trades.length === 0 ? (
         <div className="empty">No closed trades yet.</div>
@@ -26,7 +34,12 @@ export function TradesTable({ trades }: { trades: Trade[] }) {
             </thead>
             <tbody>
               {trades.slice(0, 50).map((t) => (
-                <tr key={t.id}>
+                <tr
+                  key={t.id}
+                  className={`clickable ${selectedId === t.id ? "selected" : ""}`}
+                  onClick={() => onSelect(t)}
+                  title="View chart & reason"
+                >
                   <td>
                     <div className="sym">{t.symbol}</div>
                     <div className="sub">{t.category}</div>
