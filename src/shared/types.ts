@@ -26,7 +26,7 @@ export interface User {
   max_open_positions: number;
   auto_trade_enabled: number; // 0 | 1
   allow_shorting: number; // 0 | 1
-  gemini_model: string | null;
+  ai_model: string | null; // optional per-user Claude model override
   analysis_timeframe: Timeframe;
   created_at: string;
   updated_at: string;
@@ -208,8 +208,8 @@ export interface AuthResponse {
   user: User;
 }
 
-// The structured decision Gemini returns for a single asset.
-export interface GeminiDecision {
+// The structured decision the AI returns for a single asset.
+export interface TradeDecision {
   decision: AIDecision;
   side: TradeSide;
   confidence: number; // 0..1
@@ -223,7 +223,7 @@ export interface GeminiDecision {
 }
 
 // One discovered trade idea from the discovery scan.
-export interface GeminiDiscovery {
+export interface TradeIdea {
   symbol: string;
   direction: TradeSide;
   strategy: string;

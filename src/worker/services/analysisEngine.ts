@@ -4,11 +4,11 @@
 import type {
   Asset,
   Candle,
-  GeminiDiscovery,
   Indicators,
   OpenPosition,
   Timeframe,
   Trade,
+  TradeIdea,
   User,
 } from "../../shared/types";
 import type { Env } from "../types";
@@ -18,7 +18,7 @@ import {
   getFreshLiveQuote,
   insertAILog,
   insertEquityPoint,
-  insertSuggestion,
+  upsertSuggestion,
   listAssets,
   listOpenTrades,
   listUserIds,
@@ -32,7 +32,7 @@ import {
 import { hoursBetween, round, safeJsonParse } from "../util";
 import { computeIndicators } from "./indicators";
 import { fetchMarketData, fetchQuote, normalizeInterval } from "./marketData";
-import { analyzeAsset as geminiAnalyze, discoverOpportunities } from "./gemini";
+import { analyzeAsset as analyzeWithAI, discoverOpportunities } from "./claude";
 import {
   canCloseNow,
   checkStops,
@@ -267,7 +267,7 @@ export interface AnalyzeResult {
   confidence: number;
 }
 
-// Run a deep per-asset Gemini analysis; optionally execute the decision.
+// Run a deep per-asset Claude analysis; optionally execute the decision.
 export async function analyzeOneAsset(
   env: Env,
   user: User,
@@ -276,7 +276,7 @@ export async function analyzeOneAsset(
 ): Promise<AnalyzeResult> {
   const snap = await getSnapshot(env, asset, 30, normalizeInterval(user.analysis_timeframe));
   const openTrade = (await listOpenTrades(env, user.id)).find((t) => t.asset_id === asset.id);
-  const { decision, raw } = await geminiAnalyze(
+  const { decision, raw } = await analyzeWithAI(
     env,
     user,
     asset,
@@ -341,7 +341,7 @@ export async function analyzeOneAsset(
 
 export interface DiscoveryOutcome {
   commentary: string;
-  ideas: GeminiDiscovery[];
+  ideas: TradeIdea[];
   suggestionsCreated: number;
 }
 
@@ -383,7 +383,7 @@ export async function runDiscovery(
   let created = 0;
   for (const idea of result.ideas) {
     const asset = rows.find((r) => r.asset.symbol === idea.symbol)?.asset ?? null;
-    await insertSuggestion(env, {
+    await upsertSuggestion(env, {
       user_id: user.id,
       asset_id: asset?.id ?? null,
       symbol: idea.symbol,
@@ -408,7 +408,7 @@ export async function runDiscovery(
 export async function autoTradeFromIdeas(
   env: Env,
   user: User,
-  ideas: GeminiDiscovery[],
+  ideas: TradeIdea[],
 ): Promise<{ opened: Trade[]; skipped: Array<{ symbol: string; reason: string }> }> {
   const opened: Trade[] = [];
   const skipped: Array<{ symbol: string; reason: string }> = [];
@@ -472,7 +472,7 @@ export async function runCronCycle(env: Env, userId: number): Promise<CronSummar
 
   let suggestions = 0;
   let autoOpened = 0;
-  let ideas: GeminiDiscovery[] = [];
+  let ideas: TradeIdea[] = [];
   try {
     const fresh = (await getUser(env, userId)) ?? user;
     const disc = await runDiscovery(env, fresh, 5);

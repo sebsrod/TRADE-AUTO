@@ -103,7 +103,7 @@ export function AssetManager({
                 className="btn tiny ghost"
                 onClick={() => onAnalyze(a.id)}
                 disabled={busy === `analyze-${a.id}`}
-                title="Ask Gemini for a fresh decision"
+                title="Ask Claude for a fresh decision"
               >
                 {busy === `analyze-${a.id}` ? "…" : "Analyze"}
               </button>

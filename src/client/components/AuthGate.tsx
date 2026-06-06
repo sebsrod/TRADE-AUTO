@@ -38,7 +38,7 @@ export function AuthScreen({ onAuthed }: { onAuthed: (user: User) => void }) {
           <div className="brand-mark">▲</div>
           <div>
             <h1>TRADE-AUTO</h1>
-            <p className="brand-sub">Autonomous Gemini paper-trading desk</p>
+            <p className="brand-sub">Autonomous Claude paper-trading desk</p>
           </div>
         </div>
 

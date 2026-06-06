@@ -3,6 +3,8 @@
   "name": "trade-auto-cron",
   "main": "index.ts",
   "compatibility_date": "2025-06-01",
+  // Required by the Anthropic SDK (@anthropic-ai/sdk) on the Workers runtime.
+  "compatibility_flags": ["nodejs_compat"],
 
   // Companion scheduling Worker for the Pages app. Pages can't run cron triggers,
   // so this tiny Worker runs the analysis cycle on a schedule against the SAME D1.
@@ -23,10 +25,9 @@
   "observability": { "enabled": true },
 
   "vars": {
-    "GEMINI_MODEL": "gemini-2.5-flash",
-    "GEMINI_DISCOVERY_MODEL": "gemini-2.5-flash",
+    "CLAUDE_MODEL": "claude-opus-4-8",
+    "CLAUDE_DISCOVERY_MODEL": "claude-opus-4-8",
     "DEFAULT_USER_ID": "1",
-    "ENABLE_SEARCH_GROUNDING": "false",
     "CRON_AUTO_TRADE": "true"
   }
 }

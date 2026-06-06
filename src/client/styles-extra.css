@@ -69,6 +69,43 @@
   white-space: nowrap;
 }
 
+/* ---------------- collapsible card header ---------------- */
+.collapse-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.collapse-chevron {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--muted-2);
+  transition: transform 0.15s ease;
+}
+.collapse-chevron.open {
+  transform: rotate(90deg);
+}
+.collapse-toggle:hover .collapse-chevron {
+  color: var(--text);
+}
+.collapse-count {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--card-2);
+  color: var(--muted-2);
+  border: 1px solid var(--border-2);
+}
+
 /* ---------------- auth screen ---------------- */
 .auth-wrap {
   min-height: 100vh;

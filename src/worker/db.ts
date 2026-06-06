@@ -157,7 +157,7 @@ const USER_FIELDS = [
   "max_open_positions",
   "auto_trade_enabled",
   "allow_shorting",
-  "gemini_model",
+  "ai_model",
   "analysis_timeframe",
 ];
 
@@ -531,25 +531,65 @@ export async function listAILogs(
 }
 
 // --------------------------- suggestions ---------------------------
-export async function insertSuggestion(
-  env: Env,
-  s: {
-    user_id: number;
-    asset_id: number | null;
-    symbol: string;
-    category: string | null;
-    direction: string | null;
-    strategy: string | null;
-    rationale: string | null;
-    indicators_hit: string | null;
-    risk_reward: number | null;
-    entry: number | null;
-    stop_loss: number | null;
-    take_profit: number | null;
-    confidence: number | null;
-    ai_log_id: number | null;
-  },
-): Promise<Suggestion> {
+interface SuggestionInput {
+  user_id: number;
+  asset_id: number | null;
+  symbol: string;
+  category: string | null;
+  direction: string | null;
+  strategy: string | null;
+  rationale: string | null;
+  indicators_hit: string | null;
+  risk_reward: number | null;
+  entry: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
+  confidence: number | null;
+  ai_log_id: number | null;
+}
+
+// Insert a suggestion, or — if a pending suggestion for the same asset already
+// exists for this user — update it in place. This keeps the research hub to one
+// entry per asset: re-scanning an asset refreshes its idea instead of stacking a
+// duplicate. created_at is bumped so the refreshed idea sorts as the latest.
+export async function upsertSuggestion(env: Env, s: SuggestionInput): Promise<Suggestion> {
+  const existing = await env.DB.prepare(
+    `SELECT id FROM suggestions
+     WHERE user_id = ? AND symbol = ? AND status = 'pending'
+     ORDER BY created_at DESC LIMIT 1`,
+  )
+    .bind(s.user_id, s.symbol)
+    .first<{ id: number }>();
+
+  if (existing) {
+    const updated = await env.DB.prepare(
+      `UPDATE suggestions SET
+         asset_id = ?, category = ?, direction = ?, strategy = ?, rationale = ?,
+         indicators_hit = ?, risk_reward = ?, entry = ?, stop_loss = ?, take_profit = ?,
+         confidence = ?, ai_log_id = ?, created_at = datetime('now')
+       WHERE id = ?
+       RETURNING *`,
+    )
+      .bind(
+        s.asset_id,
+        s.category,
+        s.direction,
+        s.strategy,
+        s.rationale,
+        s.indicators_hit,
+        s.risk_reward,
+        s.entry,
+        s.stop_loss,
+        s.take_profit,
+        s.confidence,
+        s.ai_log_id,
+        existing.id,
+      )
+      .first<Suggestion>();
+    if (!updated) throw new Error("Failed to update suggestion");
+    return updated;
+  }
+
   const r = await env.DB.prepare(
     `INSERT INTO suggestions
        (user_id, asset_id, symbol, category, direction, strategy, rationale, indicators_hit,

@@ -17,7 +17,7 @@ function makeUser(over: Partial<User> = {}): User {
     max_open_positions: 10,
     auto_trade_enabled: 0,
     allow_shorting: 0,
-    gemini_model: null,
+    ai_model: null,
     analysis_timeframe: "1d",
     created_at: "",
     updated_at: "",

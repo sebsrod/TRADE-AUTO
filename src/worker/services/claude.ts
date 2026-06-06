@@ -1,22 +1,31 @@
-// Gemini API wrapper — called over REST (most reliable on the Workers runtime).
-// Uses JSON output mode and robustly parses the model's structured response.
+// Claude (Anthropic) API wrapper. Calls Claude Opus 4.8 via the official SDK and
+// robustly parses the model's structured JSON response.
 
+import Anthropic from "@anthropic-ai/sdk";
 import type {
   AIDecision,
   Asset,
-  GeminiDecision,
-  GeminiDiscovery,
   Indicators,
   RiskLevel,
+  TradeDecision,
+  TradeIdea,
   User,
 } from "../../shared/types";
 import type { Env } from "../types";
-import { clamp, num, roundPrice, withTimeout } from "../util";
+import { clamp, num, roundPrice } from "../util";
 
-const GEMINI_TIMEOUT_MS = 30000;
-const BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+// Claude with adaptive thinking can take a while; give it generous headroom.
+const CLAUDE_TIMEOUT_MS = 120_000;
+const DEFAULT_MODEL = "claude-opus-4-8";
 
-export interface GeminiRawCall {
+const SYSTEM_ANALYST =
+  "You are an expert systematic trader managing a paper-trading account. " +
+  "Respond with strict, valid JSON only — no markdown fences, no commentary.";
+const SYSTEM_SCANNER =
+  "You are a market scanner for a paper-trading desk. " +
+  "Respond with strict, valid JSON only — no markdown fences, no commentary.";
+
+export interface AIRawCall {
   text: string;
   model: string;
   grounded: boolean;
@@ -59,58 +68,45 @@ export function extractJson<T = any>(text: string): T | null {
   return null;
 }
 
-async function callGemini(
+// One Claude Messages call. Adaptive thinking is on (this is reasoning-heavy
+// trade analysis); the JSON answer is returned as the text content block(s).
+async function callClaude(
   env: Env,
   model: string,
+  system: string,
   prompt: string,
-  opts: { grounding?: boolean; temperature?: number; maxTokens?: number } = {},
-): Promise<GeminiRawCall> {
-  if (!env.GEMINI_API_KEY) {
+  opts: { maxTokens?: number } = {},
+): Promise<AIRawCall> {
+  if (!env.ANTHROPIC_API_KEY) {
     throw new Error(
-      "GEMINI_API_KEY is not configured. Set it with `wrangler pages secret put GEMINI_API_KEY` " +
-        "(for the cron Worker: `wrangler secret put GEMINI_API_KEY --config cron/wrangler.jsonc`).",
+      "ANTHROPIC_API_KEY is not configured. Set it with `wrangler pages secret put ANTHROPIC_API_KEY` " +
+        "(for the cron Worker: `wrangler secret put ANTHROPIC_API_KEY --config cron/wrangler.jsonc`).",
     );
   }
-  const grounded = !!opts.grounding;
-  const body: Record<string, unknown> = {
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: {
-      temperature: opts.temperature ?? 0.4,
-      maxOutputTokens: opts.maxTokens ?? 2048,
-      // 2.5/3.x are "thinking" models whose reasoning tokens count against
-      // maxOutputTokens; disable thinking so the whole budget goes to the JSON
-      // answer (this is structured extraction, not open-ended reasoning).
-      thinkingConfig: { thinkingBudget: 0 },
-      // JSON mode and the google_search tool can conflict; only force JSON when not grounding.
-      ...(grounded ? {} : { responseMimeType: "application/json" }),
-    },
-  };
-  if (grounded) body.tools = [{ google_search: {} }];
+  const client = new Anthropic({
+    apiKey: env.ANTHROPIC_API_KEY,
+    timeout: CLAUDE_TIMEOUT_MS,
+    maxRetries: 2,
+  });
 
-  const url = `${BASE}/${model}:generateContent?key=${env.GEMINI_API_KEY}`;
-  const res = await withTimeout(
-    (signal) =>
-      fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal,
-      }),
-    GEMINI_TIMEOUT_MS,
-    "gemini generateContent",
-  );
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`Gemini HTTP ${res.status}: ${errText.slice(0, 400)}`);
-  }
-  const data: any = await res.json();
-  const parts = data?.candidates?.[0]?.content?.parts ?? [];
-  const text = parts.map((p: any) => p?.text ?? "").join("").trim();
+  const msg = await client.messages.create({
+    model,
+    max_tokens: opts.maxTokens ?? 8000,
+    thinking: { type: "adaptive" },
+    output_config: { effort: "medium" },
+    system,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const text = msg.content
+    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("")
+    .trim();
   if (!text) {
-    const reason = data?.candidates?.[0]?.finishReason ?? "unknown";
-    throw new Error(`Gemini returned no text (finishReason=${reason}).`);
+    throw new Error(`Claude returned no text (stop_reason=${msg.stop_reason ?? "unknown"}).`);
   }
-  return { text, model, grounded, prompt };
+  return { text, model, grounded: false, prompt };
 }
 
 function fmt(n: number | null | undefined, dp = 2): string {
@@ -152,13 +148,11 @@ export async function analyzeAsset(
   ind: Indicators,
   recentCloses: number[],
   hasOpenPosition: boolean,
-): Promise<{ decision: GeminiDecision; raw: GeminiRawCall }> {
-  const model = user.gemini_model || env.GEMINI_MODEL || "gemini-2.5-flash";
-  const grounding = (env.ENABLE_SEARCH_GROUNDING || "false") === "true";
+): Promise<{ decision: TradeDecision; raw: AIRawCall }> {
+  const model = user.ai_model || env.CLAUDE_MODEL || DEFAULT_MODEL;
   const closesStr = recentCloses.slice(-14).map((c) => roundPrice(c)).join(", ");
 
-  const prompt = `You are an expert systematic trader managing a paper-trading account.
-Analyze the asset below and output ONE trading decision as strict JSON.
+  const prompt = `Analyze the asset below and output ONE trading decision as strict JSON.
 
 Asset: ${asset.display_symbol || asset.symbol} (${asset.category}, source=${asset.data_source})
 Risk profile: ${user.risk_level} — ${riskGuidance(user.risk_level)}
@@ -179,13 +173,13 @@ Rules:
 Respond with ONLY this JSON object (no prose, no markdown):
 ${DECISION_SHAPE}`;
 
-  const raw = await callGemini(env, model, prompt, { grounding, temperature: 0.35 });
+  const raw = await callClaude(env, model, SYSTEM_ANALYST, prompt, { maxTokens: 8000 });
   const parsed = extractJson<any>(raw.text);
-  if (!parsed) throw new Error("Gemini decision was not valid JSON.");
+  if (!parsed) throw new Error("Claude decision was not valid JSON.");
   return { decision: normalizeDecision(parsed, ind.price, user.allow_shorting === 1), raw };
 }
 
-function normalizeDecision(p: any, price: number, allowShort: boolean): GeminiDecision {
+export function normalizeDecision(p: any, price: number, allowShort: boolean): TradeDecision {
   let decision = String(p.decision ?? "HOLD").toUpperCase() as AIDecision;
   if (!["BUY", "SELL", "HOLD", "CLOSE"].includes(decision)) decision = "HOLD";
   if (decision === "SELL" && !allowShort) decision = "HOLD";
@@ -215,8 +209,35 @@ function normalizeDecision(p: any, price: number, allowShort: boolean): GeminiDe
 
 export interface DiscoveryResult {
   commentary: string;
-  ideas: GeminiDiscovery[];
-  raw: GeminiRawCall;
+  ideas: TradeIdea[];
+  raw: AIRawCall;
+}
+
+// Coerce/validate the model's discovery payload into clean TradeIdea[], dropping
+// any symbol that isn't in the scanned universe.
+export function ideasFromParsed(
+  parsed: any,
+  validSymbols: Set<string>,
+  maxIdeas: number,
+): TradeIdea[] {
+  if (!Array.isArray(parsed?.ideas)) return [];
+  return parsed.ideas
+    .filter((i: any) => i && validSymbols.has(i.symbol))
+    .slice(0, maxIdeas)
+    .map((i: any) => ({
+      symbol: i.symbol,
+      direction: i.direction === "short" ? "short" : "long",
+      strategy: String(i.strategy ?? "").slice(0, 80),
+      rationale: String(i.rationale ?? "").slice(0, 800),
+      indicatorsHit: Array.isArray(i.indicatorsHit)
+        ? i.indicatorsHit.map((x: any) => String(x)).slice(0, 8)
+        : [],
+      riskReward: num(i.riskReward, 0),
+      entry: roundPrice(num(i.entry, 0)),
+      stopLoss: roundPrice(num(i.stopLoss, 0)),
+      takeProfit: roundPrice(num(i.takeProfit, 0)),
+      confidence: clamp(num(i.confidence, 0.5), 0, 1),
+    }));
 }
 
 // Scan all whitelisted assets and surface the strongest trade ideas ("trend swings").
@@ -226,16 +247,15 @@ export async function discoverOpportunities(
   rows: Array<{ asset: Asset; ind: Indicators }>,
   maxIdeas = 5,
 ): Promise<DiscoveryResult> {
-  const model = env.GEMINI_DISCOVERY_MODEL || env.GEMINI_MODEL || "gemini-2.5-flash";
-  const grounding = (env.ENABLE_SEARCH_GROUNDING || "false") === "true";
+  const model = env.CLAUDE_DISCOVERY_MODEL || env.CLAUDE_MODEL || DEFAULT_MODEL;
 
   const table = rows
     .map(({ asset, ind }) => `- ${asset.symbol} [${asset.category}]: ${indicatorBlock(ind)}`)
     .join("\n");
   const symbolList = rows.map((r) => r.asset.symbol).join(", ");
 
-  const prompt = `You are a market scanner for a paper-trading desk. Review the universe below and
-identify the strongest "trend swing" / structural-shift opportunities right now.
+  const prompt = `Review the universe below and identify the strongest "trend swing" /
+structural-shift opportunities right now.
 
 Risk profile: ${user.risk_level} — ${riskGuidance(user.risk_level)}
 Shorting: ${user.allow_shorting ? "allowed" : "not allowed (long-only ideas)"}
@@ -258,28 +278,10 @@ Return strict JSON with:
 Only use symbols from the provided universe. Rank ideas by conviction. If nothing is compelling, return fewer ideas.
 Respond with ONLY the JSON object.`;
 
-  const raw = await callGemini(env, model, prompt, { grounding, temperature: 0.5, maxTokens: 4096 });
+  const raw = await callClaude(env, model, SYSTEM_SCANNER, prompt, { maxTokens: 12000 });
   const parsed = extractJson<any>(raw.text);
   const validSymbols = new Set(rows.map((r) => r.asset.symbol));
-  const ideas: GeminiDiscovery[] = Array.isArray(parsed?.ideas)
-    ? parsed.ideas
-        .filter((i: any) => i && validSymbols.has(i.symbol))
-        .slice(0, maxIdeas)
-        .map((i: any) => ({
-          symbol: i.symbol,
-          direction: i.direction === "short" ? "short" : "long",
-          strategy: String(i.strategy ?? "").slice(0, 80),
-          rationale: String(i.rationale ?? "").slice(0, 800),
-          indicatorsHit: Array.isArray(i.indicatorsHit)
-            ? i.indicatorsHit.map((x: any) => String(x)).slice(0, 8)
-            : [],
-          riskReward: num(i.riskReward, 0),
-          entry: roundPrice(num(i.entry, 0)),
-          stopLoss: roundPrice(num(i.stopLoss, 0)),
-          takeProfit: roundPrice(num(i.takeProfit, 0)),
-          confidence: clamp(num(i.confidence, 0.5), 0, 1),
-        }))
-    : [];
+  const ideas = ideasFromParsed(parsed, validSymbols, maxIdeas);
   return {
     commentary: String(parsed?.commentary ?? raw.text.slice(0, 800)),
     ideas,
