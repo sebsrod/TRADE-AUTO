@@ -202,7 +202,7 @@ export async function closePosition(
   trade: Trade,
   exitPrice: number,
   reason: string,
-  opts: { force?: boolean } = {},
+  opts: { force?: boolean; rationale?: string | null } = {},
 ): Promise<CloseOutcome> {
   if (trade.status !== "open") return { ok: false, reason: "trade not open" };
   const protective = reason === "stop_loss" || reason === "take_profit";
@@ -222,6 +222,7 @@ export async function closePosition(
     pnl,
     pnl_pct: pnlPct,
     exit_reason: reason,
+    exit_rationale: opts.rationale ?? null,
   });
   if (!closed) return { ok: false, reason: "already closed" };
   await adjustCash(env, user.id, trade.position_value + pnl);

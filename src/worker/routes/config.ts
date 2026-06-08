@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { AppBindings } from "../types";
 import type { RiskLevel, Timeframe, User } from "../../shared/types";
+import { TIMEFRAMES } from "../../shared/types";
 import { getUser, updateUser } from "../db";
 import { sanitizeUser } from "../services/auth";
 import { clamp, num } from "../util";
@@ -37,8 +38,12 @@ config.patch("/", async (c) => {
   if (body.ai_model !== undefined) {
     patch.ai_model = body.ai_model ? String(body.ai_model).slice(0, 60) : null;
   }
-  if (body.analysis_timeframe && ["1h", "4h", "1d"].includes(String(body.analysis_timeframe))) {
+  if (body.analysis_timeframe && (TIMEFRAMES as string[]).includes(String(body.analysis_timeframe))) {
     patch.analysis_timeframe = body.analysis_timeframe as Timeframe;
+  }
+  if (body.strategy_notes !== undefined) {
+    const notes = body.strategy_notes == null ? null : String(body.strategy_notes).slice(0, 2000);
+    patch.strategy_notes = notes && notes.trim() ? notes : null;
   }
   if (body.starting_balance !== undefined) {
     patch.starting_balance = clamp(num(body.starting_balance, 100000), 100, 1_000_000_000);
@@ -57,6 +62,8 @@ config.post("/reset", async (c) => {
     env.DB.prepare("DELETE FROM trades WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM equity_history WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM suggestions WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM ai_logs WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM chat_messages WHERE user_id = ?").bind(user.id),
     env.DB.prepare(
       "UPDATE users SET cash_balance = starting_balance, updated_at = datetime('now') WHERE id = ?",
     ).bind(user.id),

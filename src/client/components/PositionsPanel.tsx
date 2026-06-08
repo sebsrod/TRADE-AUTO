@@ -7,16 +7,20 @@ import { useFlash } from "../lib/useFlash";
 function PositionRow({
   p,
   busy,
+  selected,
   onClose,
+  onSelect,
 }: {
   p: OpenPosition;
   busy: string | null;
+  selected: boolean;
   onClose: (id: number) => void;
+  onSelect: (p: OpenPosition) => void;
 }) {
   const priceFlash = useFlash(p.current_price);
   const pnlFlash = useFlash(p.unrealized_pnl);
   return (
-    <tr>
+    <tr className={`clickable ${selected ? "selected" : ""}`} onClick={() => onSelect(p)} title="View chart & reason">
       <td>
         <div className="sym">{p.symbol}</div>
         <div className="sub">{p.category}</div>
@@ -40,7 +44,10 @@ function PositionRow({
       <td>
         <button
           className="btn tiny danger"
-          onClick={() => onClose(p.id)}
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose(p.id);
+          }}
           disabled={busy === `close-${p.id}`}
           title={p.can_close ? "Close position" : "Min-hold not met (manual override)"}
         >
@@ -55,11 +62,15 @@ function PositionRow({
 export function PositionsPanel({
   positions,
   busy,
+  selectedId,
   onClose,
+  onSelect,
 }: {
   positions: OpenPosition[];
   busy: string | null;
+  selectedId?: number | null;
   onClose: (id: number) => void;
+  onSelect: (p: OpenPosition) => void;
 }) {
   return (
     <div className="card">
@@ -87,7 +98,14 @@ export function PositionsPanel({
             </thead>
             <tbody>
               {positions.map((p) => (
-                <PositionRow key={p.id} p={p} busy={busy} onClose={onClose} />
+                <PositionRow
+                  key={p.id}
+                  p={p}
+                  busy={busy}
+                  selected={selectedId === p.id}
+                  onClose={onClose}
+                  onSelect={onSelect}
+                />
               ))}
             </tbody>
           </table>

@@ -2,7 +2,11 @@
 
 export type AssetCategory = "stock" | "etf" | "future" | "option" | "crypto";
 export type RiskLevel = "low" | "medium" | "high";
-export type Timeframe = "1h" | "4h" | "1d";
+// Chart / analysis granularities. Binance serves all of these natively; for Yahoo
+// the non-native ones (4h, 8h, 3d) are aggregated from a finer base interval.
+export type Timeframe = "15m" | "30m" | "1h" | "4h" | "8h" | "1d" | "3d" | "1w" | "1M";
+// Every supported timeframe, oldest→finest order, for selectors and validation.
+export const TIMEFRAMES: Timeframe[] = ["15m", "30m", "1h", "4h", "8h", "1d", "3d", "1w", "1M"];
 export type TradeSide = "long" | "short";
 export type TradeStatus = "open" | "closed";
 export type AIDecision = "BUY" | "SELL" | "HOLD" | "CLOSE";
@@ -28,6 +32,7 @@ export interface User {
   allow_shorting: number; // 0 | 1
   ai_model: string | null; // optional per-user Claude model override
   analysis_timeframe: Timeframe;
+  strategy_notes: string | null; // user's free-text style/instructions for the AI
   created_at: string;
   updated_at: string;
 }
@@ -96,7 +101,8 @@ export interface Trade {
   pnl_pct: number | null;
   fees: number;
   exit_reason: string | null;
-  ai_rationale: string | null;
+  ai_rationale: string | null; // why the position was opened
+  exit_rationale: string | null; // the AI's reasoning when it closed the position
   ai_log_id: number | null;
   confidence: number | null;
   created_at: string;
@@ -257,6 +263,25 @@ export interface OptionChain {
   expiration: number | null; // the one returned
   calls: OptionContract[];
   puts: OptionContract[];
+}
+
+// One turn in the user ⇆ Claude conversation (persisted per user).
+export interface ChatMessage {
+  id: number;
+  user_id: number;
+  role: "user" | "assistant";
+  content: string;
+  asset_symbol: string | null;
+  model: string | null;
+  created_at: string;
+}
+
+// Reply to a chat turn. `strategyUpdate`, when present, is a full revised
+// trading-style note the user can one-click apply to their strategy.
+export interface ChatResponse {
+  reply: ChatMessage;
+  strategyUpdate: string | null;
+  contextSymbols: string[]; // assets the model was given live context for
 }
 
 export interface ApiError {
