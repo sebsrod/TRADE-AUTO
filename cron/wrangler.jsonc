@@ -9,8 +9,11 @@
   // Companion scheduling Worker for the Pages app. Pages can't run cron triggers,
   // so this tiny Worker runs the analysis cycle on a schedule against the SAME D1.
   // It has no public routes; it shares the database + service code with the app.
+  // Runs every 30 minutes so auto-trade acts promptly. NOTE: this Worker needs its
+  // OWN ANTHROPIC_API_KEY secret (`wrangler secret put ANTHROPIC_API_KEY --config cron/wrangler.jsonc`);
+  // without it, discovery throws and the scheduled cycle opens nothing.
   "triggers": {
-    "crons": ["0 */2 * * *"]
+    "crons": ["*/30 * * * *"]
   },
 
   "d1_databases": [

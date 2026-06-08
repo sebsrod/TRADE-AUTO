@@ -106,6 +106,18 @@
   border: 1px solid var(--border-2);
 }
 
+/* ---------------- config danger zone ---------------- */
+.danger-zone {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(244, 63, 94, 0.25);
+}
+.danger-note {
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+
 /* ---------------- auth screen ---------------- */
 .auth-wrap {
   min-height: 100vh;
@@ -213,4 +225,294 @@
 }
 .auth-link:hover {
   text-decoration: underline;
+}
+
+/* ---------------- clickable table rows ---------------- */
+.table tr.clickable {
+  cursor: pointer;
+}
+.table tr.clickable.selected td {
+  background: rgba(34, 211, 238, 0.08);
+}
+.table tr.clickable.selected td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* ---------------- asset chart panel ---------------- */
+.chart-head {
+  align-items: center;
+}
+.chart-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.chart-title h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.chart-asset-select {
+  width: auto;
+  min-width: 128px;
+  max-width: 200px;
+}
+.tf-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  background: var(--bg-2);
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  margin-bottom: 14px;
+}
+.tf-bar .seg {
+  flex: 0 0 auto;
+  min-width: 38px;
+  padding: 6px 10px;
+  text-transform: none;
+}
+
+/* ---------------- candlestick chart ---------------- */
+.cchart {
+  user-select: none;
+}
+.cchart-tip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--card);
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  box-shadow: var(--shadow);
+  min-width: 100px;
+  z-index: 5;
+}
+.cchart-tip-t {
+  color: var(--muted-2);
+  margin-bottom: 4px;
+  font-size: 10px;
+}
+.cchart-tip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.cchart-tip-row span {
+  color: var(--muted);
+}
+.cchart-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- trade reason panel ---------------- */
+.trade-reason {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.trade-reason-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.trade-reason-head .pnl {
+  margin-left: auto;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.trade-reason-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 10px 0;
+  font-size: 12px;
+  color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
+}
+.trade-reason-levels b {
+  color: var(--text);
+}
+.reason-block {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 8px;
+}
+.reason-block p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--muted-2);
+}
+.reason-label {
+  font-size: 11px;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+/* ---------------- chat with Claude ---------------- */
+.chat-card {
+  display: flex;
+  flex-direction: column;
+}
+.chat-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.chat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 4px;
+}
+.chat-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 8px 2px;
+}
+.chat-msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 88%;
+}
+.chat-msg.user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.chat-msg.assistant {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+.chat-bubble {
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-msg.user .chat-bubble {
+  background: linear-gradient(135deg, var(--accent), var(--accent-d));
+  color: #00171f;
+  border-bottom-right-radius: 4px;
+}
+.chat-msg.assistant .chat-bubble {
+  background: var(--bg-2);
+  border: 1px solid var(--border-2);
+  color: var(--text);
+  border-bottom-left-radius: 4px;
+}
+.chat-meta {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+.chat-bubble.typing {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.chat-bubble.typing .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted-2);
+  animation: typing 1s infinite;
+}
+.chat-bubble.typing .dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.chat-bubble.typing .dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes typing {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+.chat-input {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  align-items: flex-end;
+}
+.chat-input textarea {
+  flex: 1;
+  resize: vertical;
+  min-height: 42px;
+  max-height: 160px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-2);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+}
+.chat-input textarea:focus {
+  outline: none;
+  border-color: var(--accent-d);
+}
+.strategy-suggest {
+  margin-top: 12px;
+  background: rgba(34, 211, 238, 0.06);
+  border: 1px solid rgba(34, 211, 238, 0.25);
+  border-radius: 10px;
+  padding: 12px;
+}
+.strategy-suggest p {
+  margin: 6px 0 10px;
+  font-size: 13px;
+  color: var(--muted-2);
+  white-space: pre-wrap;
+}
+.strategy-suggest-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ---------------- strategy notes (config) ---------------- */
+.strategy-textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 88px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-2);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+}
+.strategy-textarea:focus {
+  outline: none;
+  border-color: var(--accent-d);
+}
+.strategy-hint {
+  display: block;
+  margin-top: 6px;
+  line-height: 1.5;
 }

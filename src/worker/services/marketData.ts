@@ -20,8 +20,32 @@ export interface MarketData {
   interval: Timeframe;
 }
 
+const SUPPORTED_TF: Timeframe[] = ["15m", "30m", "1h", "4h", "8h", "1d", "3d", "1w", "1M"];
+
 export function normalizeInterval(tf?: string): Timeframe {
-  return tf === "1h" || tf === "4h" || tf === "1d" ? tf : "1d";
+  return (SUPPORTED_TF as string[]).includes(tf ?? "") ? (tf as Timeframe) : "1d";
+}
+
+// Down-sample a candle series by grouping every `factor` consecutive candles into
+// one (open=first, close=last, high=max, low=min, volume=sum). Used to synthesize
+// timeframes a provider doesn't serve natively (e.g. Yahoo 4h/8h from 1h, 3d from 1d).
+// Exact for contiguous data (crypto); an approximation across session gaps (stocks).
+export function aggregateCandles(candles: Candle[], factor: number): Candle[] {
+  if (factor <= 1 || candles.length === 0) return candles;
+  const out: Candle[] = [];
+  for (let i = 0; i < candles.length; i += factor) {
+    const group = candles.slice(i, i + factor);
+    if (!group.length) continue;
+    out.push({
+      t: group[0].t,
+      o: group[0].o,
+      h: Math.max(...group.map((c) => c.h)),
+      l: Math.min(...group.map((c) => c.l)),
+      c: group[group.length - 1].c,
+      v: group.reduce((a, c) => a + c.v, 0),
+    });
+  }
+  return out;
 }
 
 async function fetchJson(url: string, headers?: Record<string, string>): Promise<any> {
@@ -39,10 +63,23 @@ async function fetchJson(url: string, headers?: Record<string, string>): Promise
 }
 
 // ---------------------------------------------------------------------------
-// Binance — keyless crypto klines. Native 1h / 4h / 1d.
+// Binance — keyless crypto klines. Every supported timeframe maps to a native
+// Binance interval string (15m, 30m, 1h, 4h, 8h, 1d, 3d, 1w, 1M) — no aggregation.
 // ---------------------------------------------------------------------------
+const BINANCE_LIMIT: Record<Timeframe, number> = {
+  "15m": 500,
+  "30m": 500,
+  "1h": 500,
+  "4h": 500,
+  "8h": 500,
+  "1d": 365,
+  "3d": 365,
+  "1w": 260,
+  "1M": 120,
+};
+
 async function fetchBinance(symbol: string, interval: Timeframe): Promise<MarketData> {
-  const limit = interval === "1d" ? 365 : interval === "4h" ? 500 : 720;
+  const limit = BINANCE_LIMIT[interval] ?? 500;
   const hosts = ["https://api.binance.com", "https://data-api.binance.vision"];
   let lastErr: unknown;
   for (const host of hosts) {
@@ -68,16 +105,24 @@ async function fetchBinance(symbol: string, interval: Timeframe): Promise<Market
 
 // ---------------------------------------------------------------------------
 // Yahoo Finance v8 chart — keyless; stocks, ETFs, futures, options (OCC symbols).
-// Native 1h / 1d; 4h is not offered by Yahoo, so it falls back to 1h.
+// Native: 15m, 30m, 60m(=1h), 1d, 1wk(=1w), 1mo(=1M). The intervals Yahoo doesn't
+// serve (4h, 8h, 3d) are fetched at a finer base interval and aggregated.
 // ---------------------------------------------------------------------------
-function yahooParams(interval: Timeframe): { interval: string; range: string } {
-  if (interval === "1d") return { interval: "1d", range: "1y" };
-  // 1h (and 4h-as-1h): Yahoo caps 1h history at ~730d; 6mo gives ample bars.
-  return { interval: "1h", range: "6mo" };
-}
+// requested timeframe → { yahoo interval, range, aggregation factor over the base }
+const YAHOO_PARAMS: Record<Timeframe, { interval: string; range: string; aggregate: number }> = {
+  "15m": { interval: "15m", range: "1mo", aggregate: 1 }, // Yahoo caps 15m at ~60d
+  "30m": { interval: "30m", range: "2mo", aggregate: 1 },
+  "1h": { interval: "60m", range: "6mo", aggregate: 1 },
+  "4h": { interval: "60m", range: "1y", aggregate: 4 }, // 4×1h
+  "8h": { interval: "60m", range: "1y", aggregate: 8 }, // 8×1h
+  "1d": { interval: "1d", range: "2y", aggregate: 1 },
+  "3d": { interval: "1d", range: "5y", aggregate: 3 }, // 3×1d
+  "1w": { interval: "1wk", range: "5y", aggregate: 1 },
+  "1M": { interval: "1mo", range: "10y", aggregate: 1 },
+};
 
 async function fetchYahoo(symbol: string, interval: Timeframe): Promise<MarketData> {
-  const { interval: yInt, range } = yahooParams(interval);
+  const { interval: yInt, range, aggregate } = YAHOO_PARAMS[interval] ?? YAHOO_PARAMS["1d"];
   const hosts = ["https://query1.finance.yahoo.com", "https://query2.finance.yahoo.com"];
   let lastErr: unknown;
   for (const host of hosts) {
@@ -90,7 +135,7 @@ async function fetchYahoo(symbol: string, interval: Timeframe): Promise<MarketDa
       if (!result) throw new Error("yahoo: empty result");
       const ts: number[] = result.timestamp ?? [];
       const q = result.indicators?.quote?.[0] ?? {};
-      const candles: Candle[] = [];
+      let candles: Candle[] = [];
       for (let i = 0; i < ts.length; i++) {
         const c = q.close?.[i];
         if (c == null) continue;
@@ -106,8 +151,8 @@ async function fetchYahoo(symbol: string, interval: Timeframe): Promise<MarketDa
       const meta = result.meta ?? {};
       const price = num(meta.regularMarketPrice, candles.at(-1)?.c ?? 0);
       if (!candles.length) throw new Error("yahoo: no candles");
-      // Report the granularity actually served (Yahoo has no 4h → it's 1h bars).
-      return { symbol, candles, price, source: "yahoo", interval: interval === "1d" ? "1d" : "1h" };
+      if (aggregate > 1) candles = aggregateCandles(candles, aggregate);
+      return { symbol, candles, price, source: "yahoo", interval };
     } catch (e) {
       lastErr = e;
     }
@@ -116,15 +161,43 @@ async function fetchYahoo(symbol: string, interval: Timeframe): Promise<MarketDa
 }
 
 // ---------------------------------------------------------------------------
-// Finnhub — keyed fallback covering stocks/forex/crypto.
+// Finnhub — keyed fallback covering stocks/forex/crypto. Finnhub serves native
+// 15/30/60-minute and daily resolutions; 4h/8h are aggregated from 60m and
+// 3d/1w/1M from daily, so the returned candles always match the requested TF.
 // ---------------------------------------------------------------------------
+const FINNHUB_RES: Record<Timeframe, string> = {
+  "15m": "15",
+  "30m": "30",
+  "1h": "60",
+  "4h": "60",
+  "8h": "60",
+  "1d": "D",
+  "3d": "D",
+  "1w": "D",
+  "1M": "D",
+};
+const FINNHUB_AGG: Record<Timeframe, number> = {
+  "15m": 1,
+  "30m": 1,
+  "1h": 1,
+  "4h": 4,
+  "8h": 8,
+  "1d": 1,
+  "3d": 3,
+  "1w": 5, // ~5 trading days
+  "1M": 21, // ~21 trading days
+};
+
 async function fetchFinnhub(symbol: string, interval: Timeframe, env: Env, crypto: boolean): Promise<MarketData> {
   const key = env.FINNHUB_API_KEY;
   if (!key) throw new Error("finnhub: no API key");
-  const resolution = interval === "1d" ? "D" : "60"; // Finnhub has no 4h
+  const resolution = FINNHUB_RES[interval] ?? "D";
+  const factor = FINNHUB_AGG[interval] ?? 1;
+  const daily = resolution === "D";
   const to = Math.floor(Date.now() / 1000);
-  const windowSecs = interval === "1d" ? 400 * 24 * 3600 : 60 * 24 * 3600;
-  const from = to - windowSecs;
+  // Widen the base window for higher aggregation factors so enough base bars exist.
+  const days = daily ? Math.min(400 * factor, 4000) : 60;
+  const from = to - days * 24 * 3600;
   const path = crypto ? "crypto/candle" : "stock/candle";
   const sym = crypto ? `BINANCE:${symbol}` : symbol;
   const url =
@@ -132,7 +205,7 @@ async function fetchFinnhub(symbol: string, interval: Timeframe, env: Env, crypt
     `&resolution=${resolution}&from=${from}&to=${to}&token=${key}`;
   const data = await fetchJson(url);
   if (data?.s !== "ok" || !Array.isArray(data?.t)) throw new Error("finnhub: no data");
-  const candles: Candle[] = data.t.map((t: number, i: number) => ({
+  let candles: Candle[] = data.t.map((t: number, i: number) => ({
     t: t * 1000,
     o: num(data.o[i]),
     h: num(data.h[i]),
@@ -140,9 +213,9 @@ async function fetchFinnhub(symbol: string, interval: Timeframe, env: Env, crypt
     c: num(data.c[i]),
     v: num(data.v?.[i], 0),
   }));
+  if (factor > 1) candles = aggregateCandles(candles, factor);
   const price = candles.length ? candles[candles.length - 1].c : 0;
-  // Finnhub has no 4h resolution → it served 1h bars.
-  return { symbol, candles, price, source: "finnhub", interval: interval === "1d" ? "1d" : "1h" };
+  return { symbol, candles, price, source: "finnhub", interval };
 }
 
 // ---------------------------------------------------------------------------

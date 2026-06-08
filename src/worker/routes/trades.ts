@@ -9,7 +9,7 @@ import {
 } from "../db";
 import { num } from "../util";
 import { closePosition, openPosition } from "../services/paperTrading";
-import { getPrice, recordEquity } from "../services/analysisEngine";
+import { getLivePrice, recordEquity } from "../services/analysisEngine";
 import { normalizeInterval } from "../services/marketData";
 
 const trades = new Hono<AppBindings>();
@@ -38,14 +38,13 @@ trades.post("/", async (c) => {
   const side: TradeSide = body.side === "short" ? "short" : "long";
   let entry = num(body.entry, 0);
   if (!(entry > 0)) {
-    try {
-      entry = await getPrice(c.env, asset, 15, normalizeInterval(user.analysis_timeframe));
-    } catch (e) {
-      return c.json(
-        { error: "could not determine price", detail: e instanceof Error ? e.message : String(e) },
-        502,
-      );
+    // Fill at the live spot quote — the same price feed the dashboard shows — so a
+    // position's realized P&L is consistent with the live P&L the user saw.
+    const live = await getLivePrice(c.env, asset, 8, normalizeInterval(user.analysis_timeframe));
+    if (!(live != null && live > 0)) {
+      return c.json({ error: "could not determine a live price for this asset" }, 502);
     }
+    entry = live;
   }
 
   const res = await openPosition(c.env, user, asset, {
@@ -79,14 +78,13 @@ trades.post("/:id/close", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
   let price = num(body.exit_price ?? body.price, 0);
   if (!(price > 0)) {
-    try {
-      price = await getPrice(c.env, asset, 5, normalizeInterval(user.analysis_timeframe));
-    } catch (e) {
-      return c.json(
-        { error: "could not determine price", detail: e instanceof Error ? e.message : String(e) },
-        502,
-      );
+    // Close at the live spot quote so the realized P&L matches the live unrealized
+    // P&L shown on the dashboard (not a stale cached snapshot price).
+    const live = await getLivePrice(c.env, asset, 8, normalizeInterval(user.analysis_timeframe));
+    if (!(live != null && live > 0)) {
+      return c.json({ error: "could not determine a live price for this asset" }, 502);
     }
+    price = live;
   }
 
   const res = await closePosition(c.env, user, trade, price, "manual", { force: true });

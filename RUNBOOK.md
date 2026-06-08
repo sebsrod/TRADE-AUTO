@@ -6,7 +6,7 @@ D1 database**:
 | Deployable | What it is | Command |
 | --- | --- | --- |
 | **Pages app** | SPA (`dist/client`) + the `/api/*` Hono Function | `npm run deploy` |
-| **Cron Worker** (`./cron`) | Runs the AI cycle every 2h (`0 */2 * * *`) on the same D1 | `npm run deploy:cron` |
+| **Cron Worker** (`./cron`) | Runs the AI cycle every 30 min (`*/30 * * * *`) on the same D1 | `npm run deploy:cron` |
 
 Both run the same service code and need their **own** copy of every secret (Cloudflare
 secrets are per-Worker). The AI provider is **Claude (Anthropic)** — the only required
@@ -55,8 +55,9 @@ npm run db:migrate:remote      # production D1
 # local dev DB: npm run db:migrate
 ```
 
-> **Migration `0006_ai_model.sql`** renames `users.gemini_model` → `users.ai_model`.
-> Run it **before** deploying the new code. Reads (`SELECT *`) degrade gracefully on either
+> **Migration `0006_ai_model.sql`** renames `users.gemini_model` → `users.ai_model`;
+> **`0007_chat_and_strategy.sql`** adds `users.strategy_notes`, `trades.exit_rationale`, and the
+> `chat_messages` table. Run them **before** deploying the new code. Reads (`SELECT *`) degrade gracefully on either
 > side of the rename, but a config save that writes the model-override field will error if
 > the code and schema disagree, so keep step 2 → step 4 close together. For true zero-downtime
 > you'd use expand/contract; for this app a short window is acceptable.
@@ -105,7 +106,7 @@ curl -s https://<project>.pages.dev/api/health
 2. **UI:** log in, open the dashboard, expand the **AI Research Hub** (it starts collapsed),
    and click **Scan markets**. Expect trade-idea suggestions, **one entry per asset**
    (re-scanning the same asset updates its entry in place rather than duplicating it).
-3. **Run a full cycle on demand** (instead of waiting for the 2h cron):
+3. **Run a full cycle on demand** (instead of waiting for the 30-min cron):
    `POST /api/ai/run-cycle` from the authenticated app, or hit the cron Worker's
    `GET /__run` endpoint if it has a `workers.dev` route.
 4. **Tail logs** if anything looks off:

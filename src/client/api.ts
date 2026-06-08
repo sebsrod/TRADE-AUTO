@@ -5,6 +5,8 @@ import type {
   Asset,
   AuthResponse,
   Candle,
+  ChatMessage,
+  ChatResponse,
   EquityPoint,
   Indicators,
   LivePortfolio,
@@ -88,6 +90,7 @@ export const api = {
   updateConfig: (patch: Partial<User> & Record<string, unknown>) =>
     req<User>("/config", { method: "PATCH", body: JSON.stringify(patch) }),
   resetAccount: () => req<{ ok: boolean; user: User }>("/config/reset", { method: "POST" }),
+  deleteAccount: () => req<{ ok: boolean }>("/auth/account", { method: "DELETE" }),
 
   // assets
   getAssets: () => req<Asset[]>("/assets"),
@@ -149,4 +152,13 @@ export const api = {
     }),
   rejectSuggestion: (id: number) =>
     req<{ ok: boolean }>(`/ai/suggestions/${id}/reject`, { method: "POST", body: "{}" }),
+
+  // chat
+  chatHistory: (limit = 50) => req<ChatMessage[]>(`/chat?limit=${limit}`),
+  sendChat: (message: string, symbol?: string | null) =>
+    req<ChatResponse>("/chat", {
+      method: "POST",
+      body: JSON.stringify({ message, symbol: symbol ?? undefined }),
+    }),
+  clearChat: () => req<{ ok: boolean }>("/chat", { method: "DELETE" }),
 };

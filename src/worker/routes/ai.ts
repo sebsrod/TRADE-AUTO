@@ -14,7 +14,7 @@ import { openPosition } from "../services/paperTrading";
 import { normalizeInterval } from "../services/marketData";
 import {
   analyzeOneAsset,
-  getPrice,
+  getLivePrice,
   recordEquity,
   runCronCycle,
   runDiscovery,
@@ -96,12 +96,11 @@ ai.post("/suggestions/:id/approve", async (c) => {
   }
   if (!asset) return c.json({ error: "asset for suggestion not found" }, 404);
 
+  // Fill at the live spot quote (consistent with the dashboard + the rest of the
+  // engine); fall back to the suggestion's entry if the live feed is unreachable.
   let entry = sug.entry ?? 0;
-  try {
-    entry = (await getPrice(c.env, asset, 15, normalizeInterval(user.analysis_timeframe))) || sug.entry || 0;
-  } catch {
-    /* fall back to suggestion entry */
-  }
+  const live = await getLivePrice(c.env, asset, 8, normalizeInterval(user.analysis_timeframe));
+  if (live != null && live > 0) entry = live;
 
   const side: TradeSide = sug.direction === "short" ? "short" : "long";
   const res = await openPosition(c.env, user, asset, {

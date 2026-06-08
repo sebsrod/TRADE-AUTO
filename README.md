@@ -20,7 +20,7 @@ Sharpe, drawdown) so you can judge the AI's skill.
 | Layer | Choice | Why |
 | --- | --- | --- |
 | Frontend + API | **Cloudflare Pages** (SPA + Pages Function) | One project, free `*.pages.dev` domain. The `/api/*` Function is the Hono app via `hono/cloudflare-pages`. |
-| Scheduling | **Companion cron Worker** (`./cron`) | Pages can't run cron triggers, so a tiny Worker runs the AI cycle every 2h against the **same D1** (shares the service code). |
+| Scheduling | **Companion cron Worker** (`./cron`) | Pages can't run cron triggers, so a tiny Worker runs the AI cycle every 30 min against the **same D1** (shares the service code). |
 | API router | **Hono** | Tiny, first-class Workers/Pages support; one app shared by the Function and the optional standalone Worker. |
 | Database | **Cloudflare D1** (edge SQLite) | Serverless SQL with migrations; bound to both the Pages project and the cron Worker. |
 | AI | **Claude Opus 4.8** via the **Anthropic SDK** (`@anthropic-ai/sdk`) | Most capable model for autonomous trading judgement; adaptive thinking on; model configurable via env var. Needs `nodejs_compat`. |
@@ -34,7 +34,7 @@ Browser ──► Pages Function (/api/*, Hono) ──► D1            (config,
                 ▼
    Static SPA (dist/client, _redirects SPA fallback)
 
-cron Worker (every 2h) ──► runCronCycle(sharedD1) ──► manage stops → discover → auto-trade → record equity
+cron Worker (every 30 min) ──► runCronCycle(sharedD1) ──► manage stops → discover → auto-trade → record equity
 ```
 
 ### Data model (D1)
@@ -42,7 +42,8 @@ cron Worker (every 2h) ──► runCronCycle(sharedD1) ──► manage stops �
 `users` (config + paper balance + timeframe) · `assets` (instruments + whitelist) ·
 `market_snapshots` (cached OHLCV + indicators, keyed by interval) · `trades` (paper ledger) ·
 `ai_logs` (every Claude analysis) · `suggestions` (discovered ideas, one pending entry per asset) ·
-`equity_history` (ROI / drawdown / Sharpe series). See `migrations/`.
+`equity_history` (ROI / drawdown / Sharpe series) · `chat_messages` (per-user copilot chat).
+See `migrations/`.
 
 ---
 
@@ -99,7 +100,7 @@ npx wrangler pages secret put ANTHROPIC_API_KEY
 #   optional keyed fallbacks:
 npx wrangler pages secret put FINNHUB_API_KEY
 
-# 4. Deploy the companion cron Worker (runs the AI cycle every 2h on the shared D1)
+# 4. Deploy the companion cron Worker (runs the AI cycle every 30 min on the shared D1)
 npx wrangler secret put ANTHROPIC_API_KEY --config cron/wrangler.jsonc
 npm run deploy:cron
 ```
@@ -129,6 +130,11 @@ can also run a cycle manually from the dashboard ("Run AI cycle") or `POST /api/
 - **Claude decisions** — per-asset Buy/Sell/Hold with rationale, stop, target, R:R; plus a
   universe "discovery" scan that surfaces trend-swing ideas as approve/reject suggestions.
   The Research Hub keeps **one pending entry per asset** — re-scanning refreshes it in place.
+- **Clickable price chart** — top-of-desk candlestick chart (9 timeframes, 15m–1M) driven by
+  clicking an open position or a trade-log row, with entry/stop/target overlay.
+- **Trade reasons** — why Claude opened a position (and its reasoning when it closed it).
+- **Claude chat copilot** — ask about assets with live context; describe how you trade and
+  one-click apply the strategy it drafts. Your `strategy_notes` condition every analysis/scan.
 - **Options chains** — browse CBOE-sourced strikes/expiries for any underlying and add a
   specific contract (OCC symbol) as a tradable asset.
 - **Deterministic paper engine** — risk-based sizing (Low 1% / Medium 2% / High 5%), notional
@@ -178,7 +184,7 @@ src/
       metrics.ts             # ROI, win-rate, Sharpe, drawdown
       analysisEngine.ts      # orchestration + cron cycle
   client/                    # Vite + React dashboard
-migrations/                  # D1 schema + seed + timeframe + ai_model column
+migrations/                  # D1 schema + seed + timeframe + ai_model + chat/strategy
 wrangler.jsonc               # Pages config (assets, D1, vars)
 scripts/run-test.mjs         # esbuild-based test runner
 ```

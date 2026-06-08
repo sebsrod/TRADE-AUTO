@@ -15,6 +15,7 @@ import options from "./routes/options";
 import portfolio from "./routes/portfolio";
 import trades from "./routes/trades";
 import ai from "./routes/ai";
+import chat from "./routes/chat";
 
 export const app = new Hono<AppBindings>();
 
@@ -61,6 +62,7 @@ api.route("/options", options);
 api.route("/portfolio", portfolio);
 api.route("/trades", trades);
 api.route("/ai", ai);
+api.route("/chat", chat);
 
 // Unknown API routes → JSON 404 (don't fall through to the SPA).
 api.all("*", (c) => c.json({ error: "not found" }, 404));
