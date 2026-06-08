@@ -2,7 +2,7 @@
   "name": "trade-auto",
   "version": "0.1.0",
   "private": true,
-  "description": "Gemini-powered autonomous paper-trading platform on Cloudflare Workers + D1",
+  "description": "Claude-powered autonomous paper-trading platform on Cloudflare Workers + D1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,10 +16,11 @@
     "db:create": "wrangler d1 create trade-auto-db",
     "db:migrate": "wrangler d1 migrations apply trade-auto-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply trade-auto-db --remote",
-    "test": "node scripts/run-test.mjs src/worker/services/indicators.test.ts && node scripts/run-test.mjs src/worker/services/gemini.test.ts && node scripts/run-test.mjs src/worker/services/paperTrading.test.ts",
+    "test": "node scripts/run-test.mjs src/worker/services/indicators.test.ts && node scripts/run-test.mjs src/worker/services/claude.test.ts && node scripts/run-test.mjs src/worker/services/paperTrading.test.ts",
     "test:indicators": "node scripts/run-test.mjs src/worker/services/indicators.test.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.102.0",
     "hono": "^4.6.14",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

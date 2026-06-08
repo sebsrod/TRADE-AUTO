@@ -34,8 +34,8 @@ config.patch("/", async (c) => {
   }
   if (body.auto_trade_enabled !== undefined) patch.auto_trade_enabled = body.auto_trade_enabled ? 1 : 0;
   if (body.allow_shorting !== undefined) patch.allow_shorting = body.allow_shorting ? 1 : 0;
-  if (body.gemini_model !== undefined) {
-    patch.gemini_model = body.gemini_model ? String(body.gemini_model).slice(0, 60) : null;
+  if (body.ai_model !== undefined) {
+    patch.ai_model = body.ai_model ? String(body.ai_model).slice(0, 60) : null;
   }
   if (body.analysis_timeframe && ["1h", "4h", "1d"].includes(String(body.analysis_timeframe))) {
     patch.analysis_timeframe = body.analysis_timeframe as Timeframe;

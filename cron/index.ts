@@ -7,13 +7,13 @@ import type { Env } from "../src/worker/types";
 
 export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    // Secrets are per-Worker on Cloudflare: this Worker needs its OWN GEMINI_API_KEY
-    // (wrangler secret put GEMINI_API_KEY --config cron/wrangler.jsonc). Warn loudly
+    // Secrets are per-Worker on Cloudflare: this Worker needs its OWN ANTHROPIC_API_KEY
+    // (wrangler secret put ANTHROPIC_API_KEY --config cron/wrangler.jsonc). Warn loudly
     // if it's missing so the cycle's silent no-op is observable.
-    if (!env.GEMINI_API_KEY) {
+    if (!env.ANTHROPIC_API_KEY) {
       console.warn(
-        "trade-auto-cron: GEMINI_API_KEY is not set on this Worker — discovery & auto-trade will be skipped. " +
-          "Run: wrangler secret put GEMINI_API_KEY --config cron/wrangler.jsonc",
+        "trade-auto-cron: ANTHROPIC_API_KEY is not set on this Worker — discovery & auto-trade will be skipped. " +
+          "Run: wrangler secret put ANTHROPIC_API_KEY --config cron/wrangler.jsonc",
       );
     }
     ctx.waitUntil(

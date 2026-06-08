@@ -22,7 +22,7 @@ import {
 
 const ai = new Hono<AppBindings>();
 
-// Recent Gemini analysis logs.
+// Recent Claude analysis logs.
 ai.get("/logs", async (c) => {
   const kind = c.req.query("kind") ?? undefined;
   const limit = parseInt(c.req.query("limit") ?? "50", 10);

@@ -35,7 +35,7 @@ export function Header({
         <div className="brand-mark">▲</div>
         <div>
           <h1>TRADE-AUTO</h1>
-          <p className="brand-sub">Autonomous Gemini paper-trading desk</p>
+          <p className="brand-sub">Autonomous Claude paper-trading desk</p>
         </div>
       </div>
 
@@ -65,8 +65,8 @@ export function Header({
       </div>
 
       <div className="header-actions">
-        <span className={`gemini-dot ${health?.geminiConfigured ? "on" : "off"}`} title="Gemini API status">
-          ● {health?.geminiConfigured ? "AI online" : "AI offline"}
+        <span className={`ai-dot ${health?.aiConfigured ? "on" : "off"}`} title="Claude API status">
+          ● {health?.aiConfigured ? "AI online" : "AI offline"}
         </span>
         <button className="btn ghost" onClick={onRefresh} disabled={busy != null}>
           ⟳ Refresh

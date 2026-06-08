@@ -2,6 +2,8 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "trade-auto",
   "compatibility_date": "2025-06-01",
+  // Required by the Anthropic SDK (@anthropic-ai/sdk) on the Workers/Pages runtime.
+  "compatibility_flags": ["nodejs_compat"],
 
   // Cloudflare Pages project. The SPA is built to dist/client and the API runs as a
   // Pages Function (functions/api/[[route]].ts). Bindings below are applied on deploy.
@@ -16,14 +18,13 @@
     }
   ],
 
-  // Non-secret config. GEMINI_API_KEY is a secret: `wrangler pages secret put GEMINI_API_KEY`.
+  // Non-secret config. ANTHROPIC_API_KEY is a secret: `wrangler pages secret put ANTHROPIC_API_KEY`.
   // NOTE: Pages cannot run cron triggers — scheduling is handled by the companion
   // cron Worker in ./cron (see README). Manual runs work via POST /api/ai/run-cycle.
   "vars": {
-    "GEMINI_MODEL": "gemini-2.5-flash",
-    "GEMINI_DISCOVERY_MODEL": "gemini-2.5-flash",
+    "CLAUDE_MODEL": "claude-opus-4-8",
+    "CLAUDE_DISCOVERY_MODEL": "claude-opus-4-8",
     "DEFAULT_USER_ID": "1",
-    "ENABLE_SEARCH_GROUNDING": "false",
     "CRON_AUTO_TRADE": "true"
   }
 }

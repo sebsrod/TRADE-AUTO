@@ -28,7 +28,7 @@ export function ConfigPanel({
   const [maxOpen, setMaxOpen] = useState(user.max_open_positions);
   const [autoTrade, setAutoTrade] = useState(user.auto_trade_enabled === 1);
   const [allowShort, setAllowShort] = useState(user.allow_shorting === 1);
-  const [model, setModel] = useState(user.gemini_model ?? "");
+  const [model, setModel] = useState(user.ai_model ?? "");
   const [timeframe, setTimeframe] = useState<Timeframe>(user.analysis_timeframe ?? "1d");
 
   // Re-sync when the server state changes (e.g. after reset).
@@ -39,7 +39,7 @@ export function ConfigPanel({
     setMaxOpen(user.max_open_positions);
     setAutoTrade(user.auto_trade_enabled === 1);
     setAllowShort(user.allow_shorting === 1);
-    setModel(user.gemini_model ?? "");
+    setModel(user.ai_model ?? "");
     setTimeframe(user.analysis_timeframe ?? "1d");
   }, [user]);
 
@@ -51,7 +51,7 @@ export function ConfigPanel({
     autoTrade !== (user.auto_trade_enabled === 1) ||
     allowShort !== (user.allow_shorting === 1) ||
     timeframe !== (user.analysis_timeframe ?? "1d") ||
-    (model || null) !== (user.gemini_model || null);
+    (model || null) !== (user.ai_model || null);
 
   const save = () =>
     onSave({
@@ -61,7 +61,7 @@ export function ConfigPanel({
       max_open_positions: maxOpen,
       auto_trade_enabled: autoTrade ? 1 : 0,
       allow_shorting: allowShort ? 1 : 0,
-      gemini_model: model || null,
+      ai_model: model || null,
       analysis_timeframe: timeframe,
     });
 
@@ -137,10 +137,10 @@ export function ConfigPanel({
         </div>
       </div>
 
-      <label className="field-label">Gemini model (optional override)</label>
+      <label className="field-label">Claude model (optional override)</label>
       <input
         type="text"
-        placeholder="gemini-2.5-flash"
+        placeholder="claude-opus-4-8"
         value={model}
         onChange={(e) => setModel(e.target.value)}
       />

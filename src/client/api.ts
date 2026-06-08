@@ -6,7 +6,6 @@ import type {
   AuthResponse,
   Candle,
   EquityPoint,
-  GeminiDiscovery,
   Indicators,
   LivePortfolio,
   OptionChain,
@@ -14,6 +13,7 @@ import type {
   Suggestion,
   Timeframe,
   Trade,
+  TradeIdea,
   User,
 } from "../shared/types";
 
@@ -50,7 +50,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export interface HealthResponse {
   ok: boolean;
   service: string;
-  geminiConfigured: boolean;
+  aiConfigured: boolean;
   model: string;
   time: string;
 }
@@ -67,7 +67,7 @@ export interface MarketResponse {
 
 export interface DiscoverResponse {
   commentary: string;
-  ideas: GeminiDiscovery[];
+  ideas: TradeIdea[];
   suggestionsCreated: number;
   suggestions: Suggestion[];
 }

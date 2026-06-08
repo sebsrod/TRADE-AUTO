@@ -284,9 +284,9 @@ export default function App() {
       />
 
       {error && <div className="banner error">⚠ {error}</div>}
-      {health && !health.geminiConfigured && (
+      {health && !health.aiConfigured && (
         <div className="banner warn">
-          Gemini API key not configured — set <code>GEMINI_API_KEY</code> to enable AI analysis.
+          Claude API key not configured — set <code>ANTHROPIC_API_KEY</code> to enable AI analysis.
           Market data, charts and manual paper trading still work.
         </div>
       )}
@@ -337,7 +337,7 @@ export default function App() {
       </main>
 
       <footer className="footer">
-        TRADE-AUTO · Gemini-powered paper trading · {health?.model ?? "gemini"} ·{" "}
+        TRADE-AUTO · Claude-powered paper trading · {health?.model ?? "claude"} ·{" "}
         <span className="muted">data: Binance + Yahoo Finance (live)</span>
       </footer>
 
