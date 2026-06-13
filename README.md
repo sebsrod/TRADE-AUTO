@@ -1,10 +1,10 @@
 # TRADE-AUTO
 
-**A Claude-powered autonomous paper-trading platform on Cloudflare Pages + D1.**
+**A Gemini-powered autonomous paper-trading platform on Cloudflare Pages + D1.**
 
-TRADE-AUTO evaluates whether a Claude-driven AI agent can act as a high-level autonomous
+TRADE-AUTO evaluates whether a Gemini-driven AI agent can act as a high-level autonomous
 trader. It scans stocks, ETFs, futures, options and crypto, computes technical indicators
-locally, asks Claude for explicit Buy/Sell/Hold decisions and trade ideas, and executes them
+locally, asks Gemini for explicit Buy/Sell/Hold decisions and trade ideas, and executes them
 against a deterministic paper-trading ledger — then scores the results (ROI, win-rate,
 Sharpe, drawdown) so you can judge the AI's skill.
 
@@ -23,14 +23,14 @@ Sharpe, drawdown) so you can judge the AI's skill.
 | Scheduling | **Companion cron Worker** (`./cron`) | Pages can't run cron triggers, so a tiny Worker runs the AI cycle every 30 min against the **same D1** (shares the service code). |
 | API router | **Hono** | Tiny, first-class Workers/Pages support; one app shared by the Function and the optional standalone Worker. |
 | Database | **Cloudflare D1** (edge SQLite) | Serverless SQL with migrations; bound to both the Pages project and the cron Worker. |
-| AI | **Claude Opus 4.8** via the **Anthropic SDK** (`@anthropic-ai/sdk`) | Most capable model for autonomous trading judgement; adaptive thinking on; model configurable via env var. Needs `nodejs_compat`. |
+| AI | **Gemini REST API** (`fetch`) | Most reliable on the Workers runtime; cost-effective; model + creativity configurable via env vars. |
 | Market data | **Binance** (crypto) + **Yahoo Finance v8** (stocks/ETF/futures/options) + **CBOE** (option chains) | All keyless. Finnhub/Alpha Vantage are optional keyed fallbacks. |
 | Frontend | **Vite + React + TS** + **Recharts** | Fast dashboard built to `dist/client`. |
 
 ```
-Browser ──► Pages Function (/api/*, Hono) ──► D1            (config, trades, snapshots, ai_logs…)
+Browser ──► Pages Function (/api/*, Hono) ──► D1            (config, trades, snapshots, ai_logs, chat…)
                 │     ├──► Binance / Yahoo / CBOE   (OHLCV + options → local RSI/MACD/MA/ATR/BB)
-                │     └──► Claude (Anthropic API)   (decisions + discovery, JSON output)
+                │     └──► Gemini API               (decisions + discovery + chat, JSON mode)
                 ▼
    Static SPA (dist/client, _redirects SPA fallback)
 
@@ -39,17 +39,17 @@ cron Worker (every 30 min) ──► runCronCycle(sharedD1) ──► manage sto
 
 ### Data model (D1)
 
-`users` (config + paper balance + timeframe) · `assets` (instruments + whitelist) ·
-`market_snapshots` (cached OHLCV + indicators, keyed by interval) · `trades` (paper ledger) ·
-`ai_logs` (every Claude analysis) · `suggestions` (discovered ideas, one pending entry per asset) ·
-`equity_history` (ROI / drawdown / Sharpe series) · `chat_messages` (per-user copilot chat).
-See `migrations/`.
+`users` (config + paper balance + timeframe + strategy notes + short-timeframe toggle) ·
+`assets` (instruments + whitelist) · `market_snapshots` (cached OHLCV + indicators, keyed by interval) ·
+`trades` (paper ledger, entry/exit rationale) · `ai_logs` (every Gemini analysis) ·
+`suggestions` (discovered ideas, one pending entry per asset) · `chat_messages` (per-user copilot chat) ·
+`equity_history` (ROI / drawdown / Sharpe series). See `migrations/`.
 
 ---
 
 ## Quick start (local)
 
-Requirements: Node 20+, a Cloudflare account, and an [Anthropic (Claude) API key](https://console.anthropic.com/settings/keys).
+Requirements: Node 20+, a Cloudflare account, and a [Gemini API key](https://aistudio.google.com/apikey).
 
 ```bash
 npm install
@@ -61,8 +61,8 @@ npm run db:create
 # 2. Apply migrations to the LOCAL database
 npm run db:migrate
 
-# 3. Add your Claude key for local dev
-cp .dev.vars.example .dev.vars      # then edit and set ANTHROPIC_API_KEY
+# 3. Add your Gemini key for local dev
+cp .dev.vars.example .dev.vars      # then edit and set GEMINI_API_KEY
 
 # 4a. Run the Pages app (SPA + API + local D1) on :8788
 npm run dev:api
@@ -72,10 +72,10 @@ npm run dev
 ```
 
 Open http://localhost:5173. Market data, charts, options and manual paper trading work
-without a Claude key; the AI features need `ANTHROPIC_API_KEY`.
+without a Gemini key; the AI features need `GEMINI_API_KEY`.
 
 ```bash
-npm test          # indicator math + Claude service + paper-trading tests (no network/key)
+npm test          # indicator math + Gemini service + paper-trading tests (no network/key)
 npm run typecheck # type-check worker + client + cron + functions
 ```
 
@@ -95,13 +95,13 @@ npm run db:migrate:remote                 # apply schema to production D1
 npm run pages:create                      # one-time: creates the *.pages.dev project
 npm run deploy                            # build + wrangler pages deploy
 
-# 3. Secrets (only ANTHROPIC_API_KEY is required)
-npx wrangler pages secret put ANTHROPIC_API_KEY
+# 3. Secrets (only GEMINI_API_KEY is required)
+npx wrangler pages secret put GEMINI_API_KEY
 #   optional keyed fallbacks:
 npx wrangler pages secret put FINNHUB_API_KEY
 
 # 4. Deploy the companion cron Worker (runs the AI cycle every 30 min on the shared D1)
-npx wrangler secret put ANTHROPIC_API_KEY --config cron/wrangler.jsonc
+npx wrangler secret put GEMINI_API_KEY --config cron/wrangler.jsonc
 npm run deploy:cron
 ```
 
@@ -112,37 +112,36 @@ can also run a cycle manually from the dashboard ("Run AI cycle") or `POST /api/
 
 | Var | Default | Meaning |
 | --- | --- | --- |
-| `CLAUDE_MODEL` | `claude-opus-4-8` | Model for per-asset analysis. Set to any current Claude model id. |
-| `CLAUDE_DISCOVERY_MODEL` | `claude-opus-4-8` | Model for the universe discovery scan. |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Model for per-asset analysis. Set to any current Gemini model. |
+| `GEMINI_DISCOVERY_MODEL` | `gemini-2.5-flash` | Model for the universe discovery scan. |
+| `ENABLE_SEARCH_GROUNDING` | `false` | `true` enables Gemini's Google-Search grounding for live sentiment (extra cost). |
 | `CRON_AUTO_TRADE` | `true` | Master switch for auto-trading on the cron (still requires the per-user toggle). |
 | `DEFAULT_USER_ID` | `1` | The single-user profile the dashboard operates on. |
-
-> `compatibility_flags: ["nodejs_compat"]` is set in both `wrangler.jsonc` and
-> `cron/wrangler.jsonc` — the Anthropic SDK requires it on the Workers/Pages runtime.
 
 ---
 
 ## Features
 
 - **Multi-asset scanning** — stocks, ETFs, futures, options, crypto.
-- **Adjustable analysis timeframe** — 1h / 4h / 1d (intraday or daily candles).
+- **Adjustable analysis timeframe** — 15m … 1M candles, plus a **short-timeframe (swing & momentum)
+  mode** that switches the minimum-hold presets to 5m–8h and biases the AI toward fast intraday setups.
 - **Local indicators** — RSI, MACD, SMA/EMA, Bollinger Bands, ATR, 52-wk range, trend.
-- **Claude decisions** — per-asset Buy/Sell/Hold with rationale, stop, target, R:R; plus a
-  universe "discovery" scan that surfaces trend-swing ideas as approve/reject suggestions.
-  The Research Hub keeps **one pending entry per asset** — re-scanning refreshes it in place.
-- **Clickable price chart** — top-of-desk candlestick chart (9 timeframes, 15m–1M) driven by
-  clicking an open position or a trade-log row, with entry/stop/target overlay.
-- **Trade reasons** — why Claude opened a position (and its reasoning when it closed it).
-- **Claude chat copilot** — ask about assets with live context; describe how you trade and
-  one-click apply the strategy it drafts. Your `strategy_notes` condition every analysis/scan.
-- **Options chains** — browse CBOE-sourced strikes/expiries for any underlying and add a
-  specific contract (OCC symbol) as a tradable asset.
-- **Deterministic paper engine** — risk-based sizing (Low 1% / Medium 2% / High 5%), notional
-  caps, exact cash conservation, auto stop-loss / take-profit.
-- **Guardrails** — min-hold (default 8h), max-trades/asset/24h (default 3), max-open positions,
-  whitelist, optional shorting — all editable live.
-- **Performance** — ROI, win-rate, profit factor, expectancy, annualized Sharpe, max drawdown,
-  equity curve.
+- **Gemini decisions** — per-asset Buy/Sell/Hold with rationale, stop, target, R:R; plus a universe
+  "discovery" scan that surfaces attractive trend-swing ideas as approve/reject suggestions. Runs at a
+  higher temperature for **more creative, asymmetric** setups. The Research Hub keeps **one pending entry
+  per asset** (re-scanning refreshes it in place) and is a collapsible list.
+- **Clickable price chart** — top-of-desk candlestick chart (9 timeframes, 15m–1M) driven by clicking an
+  open position or a trade-log row, with entry/stop/target overlay.
+- **Trade reasons** — why Gemini opened a position (and its reasoning when it closed it).
+- **Gemini chat copilot** — ask about assets with live context; describe how you trade and one-click apply
+  the strategy it drafts. Your `strategy_notes` condition every analysis/discovery/chat prompt.
+- **Options chains** — browse CBOE-sourced strikes/expiries for any underlying and add a specific contract
+  (OCC symbol) as a tradable asset.
+- **Deterministic paper engine** — risk-based sizing (Low 1% / Medium 2% / High 5%), notional caps, exact
+  cash conservation, live-price fills, auto stop-loss / take-profit.
+- **Guardrails** — min-hold, max-trades/asset/24h, max-open positions, whitelist, optional shorting — all
+  editable live.
+- **Performance** — ROI, win-rate, profit factor, expectancy, annualized Sharpe, max drawdown, equity curve.
 
 ---
 
@@ -150,14 +149,16 @@ can also run a cycle manually from the dashboard ("Run AI cycle") or `POST /api/
 
 | Method & path | Purpose |
 | --- | --- |
-| `GET /health` | Service + Claude status. |
+| `GET /health` | Service + Gemini status. |
 | `GET/PATCH /config` · `POST /config/reset` | Read/update trading config; reset paper account. |
+| `DELETE /auth/account` | Permanently delete the signed-in account and all its data. |
 | `GET/POST /assets` · `PATCH/DELETE /assets/:id` | Manage the watchlist + whitelist. |
-| `GET /market/:assetId?interval=1h\|4h\|1d` | Cached OHLCV + indicators (powers charts). |
+| `GET /market/:assetId?interval=…` | Cached OHLCV + indicators (powers charts). |
 | `GET /options/:symbol` · `POST /options/track` | Option chain for an underlying; track a contract. |
 | `GET /portfolio` · `/portfolio/metrics` · `/portfolio/equity` | Positions, metrics, equity curve. |
 | `GET/POST /trades` · `POST /trades/:id/close` | Ledger; open/close paper positions. |
-| `POST /ai/analyze/:assetId` | Deep Claude analysis of one asset (`{"execute":true}` to act). |
+| `GET/POST/DELETE /chat` | Gemini copilot conversation. |
+| `POST /ai/analyze/:assetId` | Deep Gemini analysis of one asset (`{"execute":true}` to act). |
 | `POST /ai/discover` · `POST /ai/run-cycle` | Run the discovery scan / full cycle now. |
 | `GET /ai/logs` · `GET /ai/suggestions` | AI history + discovered ideas. |
 | `POST /ai/suggestions/:id/approve` · `/reject` | Execute or dismiss a suggestion. |
@@ -175,16 +176,16 @@ src/
     app.ts                   # Hono app (shared by the Pages Function + Worker entry)
     index.ts                 # optional standalone Worker entry (native cron)
     db.ts                    # D1 repositories
-    routes/                  # config, assets, market, options, portfolio, trades, ai
+    routes/                  # config, assets, market, options, portfolio, trades, ai, chat
     services/
       indicators.ts          # SMA/EMA/RSI/MACD/Bollinger/ATR (+ tests)
       marketData.ts          # Binance + Yahoo (+ Finnhub) candles, CBOE option chains
-      claude.ts              # Claude (Anthropic SDK) client + prompts + JSON parsing (+ tests)
+      gemini.ts              # Gemini REST client + prompts + JSON parsing + chat (+ tests)
       paperTrading.ts        # sizing, guardrails, fills, stops (+ tests)
       metrics.ts             # ROI, win-rate, Sharpe, drawdown
       analysisEngine.ts      # orchestration + cron cycle
   client/                    # Vite + React dashboard
-migrations/                  # D1 schema + seed + timeframe + ai_model + chat/strategy
+migrations/                  # D1 schema + seed + timeframe + ai_model + chat/strategy + short_timeframe
 wrangler.jsonc               # Pages config (assets, D1, vars)
 scripts/run-test.mjs         # esbuild-based test runner
 ```

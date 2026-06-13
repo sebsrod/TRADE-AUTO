@@ -157,7 +157,7 @@ function TradeReason({ trade: t }: { trade: Trade | OpenPosition }) {
 
       {t.ai_rationale && (
         <div className="reason-block">
-          <div className="reason-label">Why Claude opened this</div>
+          <div className="reason-label">Why Gemini opened this</div>
           <p>{t.ai_rationale}</p>
         </div>
       )}

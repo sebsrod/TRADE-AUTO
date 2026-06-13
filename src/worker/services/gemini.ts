@@ -1,7 +1,6 @@
-// Claude (Anthropic) API wrapper. Calls Claude Opus 4.8 via the official SDK and
-// robustly parses the model's structured JSON response.
+// Gemini API wrapper — called over REST (most reliable on the Workers runtime).
+// Uses JSON output mode and robustly parses the model's structured response.
 
-import Anthropic from "@anthropic-ai/sdk";
 import type {
   AIDecision,
   Asset,
@@ -14,28 +13,17 @@ import type {
   User,
 } from "../../shared/types";
 import type { Env } from "../types";
-import { clamp, num, roundPrice } from "../util";
+import { clamp, num, roundPrice, withTimeout } from "../util";
 
-// Claude with adaptive thinking can take a while; give it generous headroom.
-const CLAUDE_TIMEOUT_MS = 120_000;
-const DEFAULT_MODEL = "claude-opus-4-8";
+const GEMINI_TIMEOUT_MS = 30000;
+const BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+const DEFAULT_MODEL = "gemini-2.5-flash";
 
-const SYSTEM_ANALYST =
-  "You are an expert systematic trader managing a paper-trading account. " +
-  "Respond with strict, valid JSON only — no markdown fences, no commentary.";
-const SYSTEM_SCANNER =
-  "You are a market scanner for a paper-trading desk. " +
-  "Respond with strict, valid JSON only — no markdown fences, no commentary.";
-const SYSTEM_CHAT = `You are Claude, the trading copilot inside TRADE-AUTO — a Claude-powered PAPER-trading desk.
-You help the user analyze assets, explain the desk's automated decisions, and refine their trading strategy.
-Be concise, concrete and practical (a few short paragraphs or bullets at most). Ground every claim in the
-provided technical context and the user's stated style. This is paper trading, so specific actionable trade
-reasoning is welcome, but never claim certainty about the future — always frame ideas as risk/reward.
-
-If — and ONLY if — the user is describing a DURABLE change to how they want the desk to trade (their style,
-preferences, rules, what to favor or avoid), end your reply with exactly one final line:
-STRATEGY_UPDATE: <one self-contained paragraph capturing their FULL updated trading style, ready to store verbatim>
-Do NOT include that line for ordinary questions or one-off analysis requests.`;
+// Creativity: higher temperatures surface bolder, more varied ideas. Discovery is
+// the most exploratory call, so it runs hottest.
+const TEMP_ANALYSIS = 0.6;
+const TEMP_DISCOVERY = 0.9;
+const TEMP_CHAT = 0.7;
 
 export interface AIRawCall {
   text: string;
@@ -63,6 +51,13 @@ function styleBlock(user: User): string {
   return `\nTrader's personal style & standing instructions (HIGH PRIORITY — follow unless they violate a hard risk guardrail):\n"""${notes.slice(0, 1500)}"""\n`;
 }
 
+// Short-timeframe (swing & momentum) bias. When on, steer the model toward fast,
+// decisive intraday setups with minutes-to-hours holds instead of multi-day theses.
+function horizonBlock(user: User, timeframe: Timeframe): string {
+  if (!user.short_timeframe) return "";
+  return `\nSHORT-TIMEFRAME MODE (swing & momentum): favor fast, decisive setups — momentum breakouts, trend continuations, and intraday mean-reversion. Target holds of minutes to a few hours (5m–8h); set timeHorizonHours small (0.1–8). Read the most recent ${timeframe} price action closely and avoid multi-day theses.\n`;
+}
+
 // Extract a JSON value from model text that may be fenced or prefixed.
 export function extractJson<T = any>(text: string): T | null {
   if (!text) return null;
@@ -88,45 +83,59 @@ export function extractJson<T = any>(text: string): T | null {
   return null;
 }
 
-// One Claude Messages call. Adaptive thinking is on (this is reasoning-heavy
-// trade analysis); the answer is returned as the text content block(s).
-async function callClaude(
+async function callGemini(
   env: Env,
   model: string,
-  system: string,
   prompt: string,
-  opts: { maxTokens?: number } = {},
+  opts: { grounding?: boolean; temperature?: number; maxTokens?: number; plainText?: boolean } = {},
 ): Promise<AIRawCall> {
-  if (!env.ANTHROPIC_API_KEY) {
+  if (!env.GEMINI_API_KEY) {
     throw new Error(
-      "ANTHROPIC_API_KEY is not configured. Set it with `wrangler pages secret put ANTHROPIC_API_KEY` " +
-        "(for the cron Worker: `wrangler secret put ANTHROPIC_API_KEY --config cron/wrangler.jsonc`).",
+      "GEMINI_API_KEY is not configured. Set it with `wrangler pages secret put GEMINI_API_KEY` " +
+        "(for the cron Worker: `wrangler secret put GEMINI_API_KEY --config cron/wrangler.jsonc`).",
     );
   }
-  const client = new Anthropic({
-    apiKey: env.ANTHROPIC_API_KEY,
-    timeout: CLAUDE_TIMEOUT_MS,
-    maxRetries: 2,
-  });
+  const grounded = !!opts.grounding;
+  const body: Record<string, unknown> = {
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: opts.temperature ?? 0.4,
+      maxOutputTokens: opts.maxTokens ?? 2048,
+      // 2.5/3.x are "thinking" models whose reasoning tokens count against
+      // maxOutputTokens; disable thinking so the whole budget goes to the JSON
+      // answer (this is structured extraction, not open-ended reasoning).
+      thinkingConfig: { thinkingBudget: 0 },
+      // JSON mode conflicts with the google_search tool and with free-form chat;
+      // only force JSON for structured extraction (not grounded, not plain-text).
+      ...(grounded || opts.plainText ? {} : { responseMimeType: "application/json" }),
+    },
+  };
+  if (grounded) body.tools = [{ google_search: {} }];
 
-  const msg = await client.messages.create({
-    model,
-    max_tokens: opts.maxTokens ?? 8000,
-    thinking: { type: "adaptive" },
-    output_config: { effort: "medium" },
-    system,
-    messages: [{ role: "user", content: prompt }],
-  });
-
-  const text = msg.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("")
-    .trim();
-  if (!text) {
-    throw new Error(`Claude returned no text (stop_reason=${msg.stop_reason ?? "unknown"}).`);
+  const url = `${BASE}/${model}:generateContent?key=${env.GEMINI_API_KEY}`;
+  const res = await withTimeout(
+    (signal) =>
+      fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal,
+      }),
+    GEMINI_TIMEOUT_MS,
+    "gemini generateContent",
+  );
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Gemini HTTP ${res.status}: ${errText.slice(0, 400)}`);
   }
-  return { text, model, grounded: false, prompt };
+  const data: any = await res.json();
+  const parts = data?.candidates?.[0]?.content?.parts ?? [];
+  const text = parts.map((p: any) => p?.text ?? "").join("").trim();
+  if (!text) {
+    const reason = data?.candidates?.[0]?.finishReason ?? "unknown";
+    throw new Error(`Gemini returned no text (finishReason=${reason}).`);
+  }
+  return { text, model, grounded, prompt };
 }
 
 function fmt(n: number | null | undefined, dp = 2): string {
@@ -170,10 +179,13 @@ export async function analyzeAsset(
   hasOpenPosition: boolean,
   timeframe: Timeframe = "1d",
 ): Promise<{ decision: TradeDecision; raw: AIRawCall }> {
-  const model = user.ai_model || env.CLAUDE_MODEL || DEFAULT_MODEL;
+  const model = user.ai_model || env.GEMINI_MODEL || DEFAULT_MODEL;
+  const grounding = (env.ENABLE_SEARCH_GROUNDING || "false") === "true";
   const closesStr = recentCloses.slice(-14).map((c) => roundPrice(c)).join(", ");
 
-  const prompt = `Analyze the asset below and output ONE trading decision as strict JSON.
+  const prompt = `You are an expert systematic trader managing a paper-trading account.
+Analyze the asset below and output ONE trading decision as strict JSON. Be decisive and creative:
+when the setup is genuinely attractive, take it — but never invent data or ignore risk.
 
 Asset: ${asset.display_symbol || asset.symbol} (${asset.category}, source=${asset.data_source})
 Risk profile: ${user.risk_level} — ${riskGuidance(user.risk_level)}
@@ -181,7 +193,7 @@ Account: cash=$${fmt(user.cash_balance)}, min hold time = ${user.min_hold_hours}
     user.allow_shorting ? "ALLOWED" : "NOT allowed"
   }.
 Open position currently: ${hasOpenPosition ? "YES (you may HOLD or CLOSE)" : "NO (you may BUY, SELL/short, or HOLD)"}
-${styleBlock(user)}
+${styleBlock(user)}${horizonBlock(user, timeframe)}
 Technical snapshot (${timeframe} candles): ${indicatorBlock(ind)}
 Recent closes (oldest→newest): ${closesStr}
 
@@ -194,13 +206,21 @@ Rules:
 Respond with ONLY this JSON object (no prose, no markdown):
 ${DECISION_SHAPE}`;
 
-  const raw = await callClaude(env, model, SYSTEM_ANALYST, prompt, { maxTokens: 8000 });
+  const raw = await callGemini(env, model, prompt, { grounding, temperature: TEMP_ANALYSIS });
   const parsed = extractJson<any>(raw.text);
-  if (!parsed) throw new Error("Claude decision was not valid JSON.");
-  return { decision: normalizeDecision(parsed, ind.price, user.allow_shorting === 1), raw };
+  if (!parsed) throw new Error("Gemini decision was not valid JSON.");
+  return {
+    decision: normalizeDecision(parsed, ind.price, user.allow_shorting === 1, user.short_timeframe === 1),
+    raw,
+  };
 }
 
-export function normalizeDecision(p: any, price: number, allowShort: boolean): TradeDecision {
+export function normalizeDecision(
+  p: any,
+  price: number,
+  allowShort: boolean,
+  shortMode = false,
+): TradeDecision {
   let decision = String(p.decision ?? "HOLD").toUpperCase() as AIDecision;
   if (!["BUY", "SELL", "HOLD", "CLOSE"].includes(decision)) decision = "HOLD";
   if (decision === "SELL" && !allowShort) decision = "HOLD";
@@ -214,6 +234,9 @@ export function normalizeDecision(p: any, price: number, allowShort: boolean): T
     Math.abs(entry - stopLoss) > 0
       ? Math.abs(takeProfit - entry) / Math.abs(entry - stopLoss)
       : num(p.riskReward, 0);
+  // Short-timeframe trades can have minutes-scale horizons; otherwise floor at 1h.
+  const minHorizon = shortMode ? 1 / 12 : 1;
+  const defHorizon = shortMode ? 2 : 24;
   return {
     decision,
     side,
@@ -224,7 +247,7 @@ export function normalizeDecision(p: any, price: number, allowShort: boolean): T
     stopLoss,
     takeProfit,
     riskReward: Number.isFinite(rr) ? Math.round(rr * 100) / 100 : 0,
-    timeHorizonHours: clamp(num(p.timeHorizonHours, 24), 1, 24 * 30),
+    timeHorizonHours: clamp(num(p.timeHorizonHours, defHorizon), minHorizon, 24 * 30),
   };
 }
 
@@ -268,38 +291,48 @@ export async function discoverOpportunities(
   rows: Array<{ asset: Asset; ind: Indicators }>,
   maxIdeas = 5,
 ): Promise<DiscoveryResult> {
-  const model = env.CLAUDE_DISCOVERY_MODEL || env.CLAUDE_MODEL || DEFAULT_MODEL;
+  const model = env.GEMINI_DISCOVERY_MODEL || env.GEMINI_MODEL || DEFAULT_MODEL;
+  const grounding = (env.ENABLE_SEARCH_GROUNDING || "false") === "true";
 
   const table = rows
     .map(({ asset, ind }) => `- ${asset.symbol} [${asset.category}]: ${indicatorBlock(ind)}`)
     .join("\n");
   const symbolList = rows.map((r) => r.asset.symbol).join(", ");
 
-  const prompt = `Review the universe below and identify the strongest "trend swing" /
-structural-shift opportunities right now.
+  const prompt = `You are a sharp market scanner for a paper-trading desk. Review the universe below and
+surface the most ATTRACTIVE, asymmetric opportunities right now — be creative and look for the
+non-obvious edge, not just textbook signals.
 
 Risk profile: ${user.risk_level} — ${riskGuidance(user.risk_level)}
 Shorting: ${user.allow_shorting ? "allowed" : "not allowed (long-only ideas)"}
-${styleBlock(user)}
+${styleBlock(user)}${horizonBlock(user, user.analysis_timeframe)}
 Universe (indicators):
 ${table}
+
+What makes a setup attractive: clear momentum or a structural shift, strong confluence, an
+asymmetric payoff (aim risk:reward >= 2 where the structure supports it), and a clean invalidation.
+Reward conviction and upside — surface the boldest ideas you genuinely believe in.
 
 Return strict JSON with:
 - "commentary": a 3-5 sentence overview of current cross-market conditions and where the best risk/reward lies.
 - "ideas": up to ${maxIdeas} of the BEST setups, each: {
     "symbol": one of [${symbolList}],
     "direction": "long" | "short",
-    "strategy": short label (e.g. "RSI reversal", "MACD trend continuation", "52w breakout"),
+    "strategy": short label (e.g. "RSI reversal", "MACD trend continuation", "52w breakout", "momentum burst"),
     "rationale": 1-3 sentences citing specific indicators,
     "indicatorsHit": string[] (e.g. ["RSI<30","price>SMA50"]),
     "riskReward": number,
     "entry": number, "stopLoss": number, "takeProfit": number,
     "confidence": number (0..1)
   }
-Only use symbols from the provided universe. Rank ideas by conviction. If nothing is compelling, return fewer ideas.
+Only use symbols from the provided universe. Rank ideas by conviction × upside. If nothing is compelling, return fewer ideas.
 Respond with ONLY the JSON object.`;
 
-  const raw = await callClaude(env, model, SYSTEM_SCANNER, prompt, { maxTokens: 12000 });
+  const raw = await callGemini(env, model, prompt, {
+    grounding,
+    temperature: TEMP_DISCOVERY,
+    maxTokens: 4096,
+  });
   const parsed = extractJson<any>(raw.text);
   const validSymbols = new Set(rows.map((r) => r.asset.symbol));
   const ideas = ideasFromParsed(parsed, validSymbols, maxIdeas);
@@ -321,14 +354,15 @@ export interface ChatResult {
   raw: AIRawCall;
 }
 
-export async function chatWithClaude(
+export async function chatWithGemini(
   env: Env,
   user: User,
   history: ChatMessage[],
   userMessage: string,
   contextBlocks: string[],
 ): Promise<ChatResult> {
-  const model = user.ai_model || env.CLAUDE_MODEL || DEFAULT_MODEL;
+  const model = user.ai_model || env.GEMINI_MODEL || DEFAULT_MODEL;
+  const grounding = (env.ENABLE_SEARCH_GROUNDING || "false") === "true";
 
   const convo = history
     .slice(-12)
@@ -338,13 +372,30 @@ export async function chatWithClaude(
     ? `\nLive market context (use it; do not invent numbers):\n${contextBlocks.join("\n")}\n`
     : "";
 
-  const prompt = `Trader's risk profile: ${user.risk_level} — ${riskGuidance(user.risk_level)}
-Account: cash=$${fmt(user.cash_balance)}, shorting ${user.allow_shorting ? "allowed" : "disabled"}, analysis timeframe ${user.analysis_timeframe}.
-${styleBlock(user) || "The trader has not described a personal style yet.\n"}${context}
-Conversation so far:
-${convo ? convo + "\n" : ""}User: ${userMessage}`;
+  const prompt = `You are Gemini, the trading copilot inside TRADE-AUTO — a Gemini-powered PAPER-trading desk.
+You help the user analyze assets, explain the desk's automated decisions, and refine their trading strategy.
+Be concise, concrete and practical (a few short paragraphs or bullets at most). Ground every claim in the
+provided technical context and the user's stated style. This is paper trading, so specific actionable trade
+reasoning is welcome, but never claim certainty about the future — always frame ideas as risk/reward.
 
-  const raw = await callClaude(env, model, SYSTEM_CHAT, prompt, { maxTokens: 4000 });
+Trader's risk profile: ${user.risk_level} — ${riskGuidance(user.risk_level)}
+Account: cash=$${fmt(user.cash_balance)}, shorting ${user.allow_shorting ? "allowed" : "disabled"}, analysis timeframe ${user.analysis_timeframe}${user.short_timeframe ? " (short-timeframe swing/momentum mode ON)" : ""}.
+${styleBlock(user) || "The trader has not described a personal style yet.\n"}${context}
+If — and ONLY if — the user is describing a DURABLE change to how they want the desk to trade (their style,
+preferences, rules, what to favor or avoid), end your reply with exactly one final line:
+STRATEGY_UPDATE: <one self-contained paragraph capturing their FULL updated trading style, ready to store verbatim>
+Do NOT include that line for ordinary questions or one-off analysis requests.
+
+Conversation so far:
+${convo ? convo + "\n" : ""}User: ${userMessage}
+Assistant:`;
+
+  const raw = await callGemini(env, model, prompt, {
+    grounding,
+    plainText: true,
+    temperature: TEMP_CHAT,
+    maxTokens: 1536,
+  });
 
   // Split a trailing STRATEGY_UPDATE: line out of the visible reply. The tag must
   // START a line (anchored) so a mid-sentence mention of it in ordinary prose can't

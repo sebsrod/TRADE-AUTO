@@ -52,7 +52,7 @@ export default function App() {
   // reason panel tracks repricing and the open→closed transition automatically.
   const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  // Chat with Claude.
+  // Chat with Gemini.
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatSending, setChatSending] = useState(false);
   const [strategyUpdate, setStrategyUpdate] = useState<string | null>(null);
@@ -212,7 +212,7 @@ export default function App() {
     setSelectedId(null);
   }, []);
 
-  // --- chat with Claude ---
+  // --- chat with Gemini ---
   const sendChat = useCallback(
     async (message: string) => {
       if (chatSending) return;
@@ -270,7 +270,7 @@ export default function App() {
       run("config", async () => {
         await api.updateConfig({ strategy_notes: notes });
         setStrategyUpdate(null);
-        return "Trading style updated — Claude will apply it from now on.";
+        return "Trading style updated — Gemini will apply it from now on.";
       }),
     [run],
   );
@@ -409,7 +409,7 @@ export default function App() {
       {error && <div className="banner error">⚠ {error}</div>}
       {health && !health.aiConfigured && (
         <div className="banner warn">
-          Claude API key not configured — set <code>ANTHROPIC_API_KEY</code> to enable AI analysis.
+          Gemini API key not configured — set <code>GEMINI_API_KEY</code> to enable AI analysis.
           Market data, charts and manual paper trading still work.
         </div>
       )}
@@ -488,7 +488,7 @@ export default function App() {
       </main>
 
       <footer className="footer">
-        TRADE-AUTO · Claude-powered paper trading · {health?.model ?? "claude"} ·{" "}
+        TRADE-AUTO · Gemini-powered paper trading · {health?.model ?? "gemini"} ·{" "}
         <span className="muted">data: Binance + Yahoo Finance (live)</span>
       </footer>
 

@@ -35,6 +35,7 @@ config.patch("/", async (c) => {
   }
   if (body.auto_trade_enabled !== undefined) patch.auto_trade_enabled = body.auto_trade_enabled ? 1 : 0;
   if (body.allow_shorting !== undefined) patch.allow_shorting = body.allow_shorting ? 1 : 0;
+  if (body.short_timeframe !== undefined) patch.short_timeframe = body.short_timeframe ? 1 : 0;
   if (body.ai_model !== undefined) {
     patch.ai_model = body.ai_model ? String(body.ai_model).slice(0, 60) : null;
   }

@@ -9,13 +9,14 @@ export interface Env {
   ASSETS: Fetcher;
 
   // Non-secret vars (wrangler.jsonc -> vars)
-  CLAUDE_MODEL?: string;
-  CLAUDE_DISCOVERY_MODEL?: string;
+  GEMINI_MODEL?: string;
+  GEMINI_DISCOVERY_MODEL?: string;
   DEFAULT_USER_ID?: string;
+  ENABLE_SEARCH_GROUNDING?: string;
   CRON_AUTO_TRADE?: string;
 
   // Secrets
-  ANTHROPIC_API_KEY?: string;
+  GEMINI_API_KEY?: string;
   FINNHUB_API_KEY?: string;
   ALPHAVANTAGE_API_KEY?: string;
   POLYGON_API_KEY?: string;

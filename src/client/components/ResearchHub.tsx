@@ -55,7 +55,7 @@ export function ResearchHub({
           {commentary && (
             <div className="commentary">
               <div className="commentary-label">
-                Claude market commentary · {timeAgo(commentary.created_at)}
+                Gemini market commentary · {timeAgo(commentary.created_at)}
               </div>
               <p>{commentary.rationale}</p>
             </div>
@@ -64,7 +64,7 @@ export function ResearchHub({
           <h3 className="subhead">Suggested assets to trade</h3>
           {pending.length === 0 ? (
             <div className="empty">
-              No pending suggestions. Run a market scan to let Claude surface trend swings.
+              No pending suggestions. Run a market scan to let Gemini surface trend swings.
             </div>
           ) : (
             <div className="suggestions">

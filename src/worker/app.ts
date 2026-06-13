@@ -49,8 +49,8 @@ api.get("/health", (c) =>
   c.json({
     ok: true,
     service: "trade-auto",
-    aiConfigured: !!c.env.ANTHROPIC_API_KEY,
-    model: c.env.CLAUDE_MODEL ?? "claude-opus-4-8",
+    aiConfigured: !!c.env.GEMINI_API_KEY,
+    model: c.env.GEMINI_MODEL ?? "gemini-2.5-flash",
     time: new Date().toISOString(),
   }),
 );
