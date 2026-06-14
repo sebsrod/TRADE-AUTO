@@ -47,7 +47,7 @@ export function ChatPanel({
   return (
     <div className="card chat-card">
       <div className="card-head">
-        <h2>Chat with Claude</h2>
+        <h2>Chat with Gemini</h2>
         <div className="chat-head-actions">
           <span className={`ai-dot ${aiOnline ? "on" : "off"}`}>
             ● {aiOnline ? "online" : "offline"}
@@ -63,7 +63,7 @@ export function ChatPanel({
       <div className="chat-list" ref={listRef}>
         {messages.length === 0 && !sending ? (
           <div className="chat-hint">
-            Ask Claude to analyze an asset (“analyze BTCUSDT on the 4h”), explain a trade, or
+            Ask Gemini to analyze an asset (“analyze BTCUSDT on the 4h”), explain a trade, or
             describe how you like to trade — it will fold your style into the desk's strategy.
           </div>
         ) : (
@@ -71,7 +71,7 @@ export function ChatPanel({
             <div key={m.id} className={`chat-msg ${m.role}`}>
               <div className="chat-bubble">{m.content}</div>
               <div className="chat-meta">
-                {m.role === "assistant" ? "Claude" : "You"}
+                {m.role === "assistant" ? "Gemini" : "You"}
                 {m.asset_symbol ? ` · ${m.asset_symbol}` : ""} · {timeAgo(m.created_at)}
               </div>
             </div>
@@ -90,7 +90,7 @@ export function ChatPanel({
 
       {strategyUpdate && (
         <div className="strategy-suggest">
-          <div className="reason-label">Claude suggests updating your trading style</div>
+          <div className="reason-label">Gemini suggests updating your trading style</div>
           <p>{strategyUpdate}</p>
           <div className="strategy-suggest-actions">
             <button className="btn tiny primary" onClick={() => onApplyStrategy(strategyUpdate)} disabled={sending}>
@@ -108,7 +108,7 @@ export function ChatPanel({
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="Message Claude…  (Enter to send, Shift+Enter for newline)"
+          placeholder="Message Gemini…  (Enter to send, Shift+Enter for newline)"
           rows={2}
           disabled={sending}
         />

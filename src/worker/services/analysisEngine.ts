@@ -32,7 +32,7 @@ import {
 import { hoursBetween, round, safeJsonParse } from "../util";
 import { computeIndicators } from "./indicators";
 import { fetchMarketData, fetchQuote, normalizeInterval } from "./marketData";
-import { analyzeAsset as analyzeWithAI, discoverOpportunities } from "./claude";
+import { analyzeAsset as analyzeWithAI, discoverOpportunities } from "./gemini";
 import {
   canCloseNow,
   checkStops,
@@ -269,7 +269,7 @@ export interface AnalyzeResult {
   confidence: number;
 }
 
-// Run a deep per-asset Claude analysis; optionally execute the decision.
+// Run a deep per-asset Gemini analysis; optionally execute the decision.
 export async function analyzeOneAsset(
   env: Env,
   user: User,

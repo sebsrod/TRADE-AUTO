@@ -177,6 +177,7 @@ const USER_FIELDS = [
   "ai_model",
   "analysis_timeframe",
   "strategy_notes",
+  "short_timeframe",
 ];
 
 export async function updateUser(

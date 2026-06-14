@@ -363,7 +363,7 @@
   letter-spacing: 0.4px;
 }
 
-/* ---------------- chat with Claude ---------------- */
+/* ---------------- chat with Gemini ---------------- */
 .chat-card {
   display: flex;
   flex-direction: column;

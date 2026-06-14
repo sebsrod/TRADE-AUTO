@@ -19,6 +19,8 @@ function makeUser(over: Partial<User> = {}): User {
     allow_shorting: 0,
     ai_model: null,
     analysis_timeframe: "1d",
+    strategy_notes: null,
+    short_timeframe: 0,
     created_at: "",
     updated_at: "",
     ...over,

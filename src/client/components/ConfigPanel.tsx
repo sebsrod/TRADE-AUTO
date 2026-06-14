@@ -8,7 +8,13 @@ const RISK_INFO: Record<RiskLevel, string> = {
   medium: "2% risk / trade",
   high: "5% risk / trade",
 };
-const HOLD_OPTIONS = [1, 2, 4, 8, 12, 24, 48];
+
+// Minimum-hold presets. Short-timeframe mode swaps in minutes-to-hours holds for
+// swing/momentum trading; normal mode keeps the multi-hour/day options.
+const HOLD_NORMAL = [1, 2, 4, 8, 12, 24, 48]; // hours
+const HOLD_SHORT = [5 / 60, 15 / 60, 30 / 60, 1, 2, 4, 8]; // 5m … 8h, in hours
+const holdLabel = (h: number) => (h < 1 ? `${Math.round(h * 60)}m` : `${h}h`);
+const sameHold = (a: number, b: number) => Math.abs(a - b) < 1e-6;
 
 export function ConfigPanel({
   user,
@@ -29,6 +35,7 @@ export function ConfigPanel({
   const [maxOpen, setMaxOpen] = useState(user.max_open_positions);
   const [autoTrade, setAutoTrade] = useState(user.auto_trade_enabled === 1);
   const [allowShort, setAllowShort] = useState(user.allow_shorting === 1);
+  const [shortTf, setShortTf] = useState(user.short_timeframe === 1);
   const [model, setModel] = useState(user.ai_model ?? "");
   const [timeframe, setTimeframe] = useState<Timeframe>(user.analysis_timeframe ?? "1d");
   const [notes, setNotes] = useState(user.strategy_notes ?? "");
@@ -41,18 +48,30 @@ export function ConfigPanel({
     setMaxOpen(user.max_open_positions);
     setAutoTrade(user.auto_trade_enabled === 1);
     setAllowShort(user.allow_shorting === 1);
+    setShortTf(user.short_timeframe === 1);
     setModel(user.ai_model ?? "");
     setTimeframe(user.analysis_timeframe ?? "1d");
     setNotes(user.strategy_notes ?? "");
   }, [user]);
 
+  const holdOptions = shortTf ? HOLD_SHORT : HOLD_NORMAL;
+
+  // Switching mode snaps the min-hold to a sensible default if the current value
+  // isn't one of the new mode's presets.
+  const toggleShortTf = (on: boolean) => {
+    setShortTf(on);
+    const opts = on ? HOLD_SHORT : HOLD_NORMAL;
+    if (!opts.some((h) => sameHold(h, minHold))) setMinHold(on ? 15 / 60 : 8);
+  };
+
   const dirty =
     risk !== user.risk_level ||
-    minHold !== user.min_hold_hours ||
+    !sameHold(minHold, user.min_hold_hours) ||
     maxTrades !== user.max_trades_per_day ||
     maxOpen !== user.max_open_positions ||
     autoTrade !== (user.auto_trade_enabled === 1) ||
     allowShort !== (user.allow_shorting === 1) ||
+    shortTf !== (user.short_timeframe === 1) ||
     timeframe !== (user.analysis_timeframe ?? "1d") ||
     notes.trim() !== (user.strategy_notes ?? "").trim() ||
     (model || null) !== (user.ai_model || null);
@@ -65,6 +84,7 @@ export function ConfigPanel({
       max_open_positions: maxOpen,
       auto_trade_enabled: autoTrade ? 1 : 0,
       allow_shorting: allowShort ? 1 : 0,
+      short_timeframe: shortTf ? 1 : 0,
       ai_model: model || null,
       analysis_timeframe: timeframe,
       strategy_notes: notes.trim() ? notes.trim() : null,
@@ -105,16 +125,21 @@ export function ConfigPanel({
         ))}
       </div>
 
-      <label className="field-label">Minimum hold time</label>
+      <label className="toggle">
+        <input type="checkbox" checked={shortTf} onChange={(e) => toggleShortTf(e.target.checked)} />
+        <span>Short-timeframe operation — swing &amp; momentum (minutes-to-hours holds)</span>
+      </label>
+
+      <label className="field-label">Minimum hold time{shortTf ? " (short mode)" : ""}</label>
       <div className="segmented wrap">
-        {HOLD_OPTIONS.map((h) => (
+        {holdOptions.map((h) => (
           <button
             key={h}
-            className={`seg ${minHold === h ? "active" : ""}`}
+            className={`seg ${sameHold(minHold, h) ? "active" : ""}`}
             onClick={() => setMinHold(h)}
             type="button"
           >
-            {h}h
+            {holdLabel(h)}
           </button>
         ))}
       </div>
@@ -152,13 +177,13 @@ export function ConfigPanel({
         onChange={(e) => setNotes(e.target.value)}
       />
       <span className="sub strategy-hint">
-        Applied to every analysis, discovery scan and chat. You can also tell Claude in chat and apply its draft here.
+        Applied to every analysis, discovery scan and chat. You can also tell Gemini in chat and apply its draft here.
       </span>
 
-      <label className="field-label">Claude model (optional override)</label>
+      <label className="field-label">Gemini model (optional override)</label>
       <input
         type="text"
-        placeholder="claude-opus-4-8"
+        placeholder="gemini-2.5-flash"
         value={model}
         onChange={(e) => setModel(e.target.value)}
       />

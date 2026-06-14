@@ -9,8 +9,8 @@ D1 database**:
 | **Cron Worker** (`./cron`) | Runs the AI cycle every 30 min (`*/30 * * * *`) on the same D1 | `npm run deploy:cron` |
 
 Both run the same service code and need their **own** copy of every secret (Cloudflare
-secrets are per-Worker). The AI provider is **Claude (Anthropic)** — the only required
-secret is `ANTHROPIC_API_KEY`.
+secrets are per-Worker). The AI provider is **Gemini** — the only required secret is
+`GEMINI_API_KEY`.
 
 ---
 
@@ -18,17 +18,13 @@ secret is `ANTHROPIC_API_KEY`.
 
 - Node 20+ and a clean install: `npm install`
 - A Cloudflare account, authenticated locally: `npx wrangler login`
-- An Anthropic API key: https://console.anthropic.com/settings/keys
+- A Gemini API key: https://aistudio.google.com/apikey
 - Green local checks (do this before every deploy):
   ```bash
   npm run typecheck
   npm test
   npm run build
   ```
-
-> `compatibility_flags: ["nodejs_compat"]` must stay set in **both** `wrangler.jsonc` and
-> `cron/wrangler.jsonc` — the Anthropic SDK requires it on the Workers/Pages runtime. It is
-> already committed; don't remove it.
 
 ---
 
@@ -55,12 +51,10 @@ npm run db:migrate:remote      # production D1
 # local dev DB: npm run db:migrate
 ```
 
-> **Migration `0006_ai_model.sql`** renames `users.gemini_model` → `users.ai_model`;
-> **`0007_chat_and_strategy.sql`** adds `users.strategy_notes`, `trades.exit_rationale`, and the
-> `chat_messages` table. Run them **before** deploying the new code. Reads (`SELECT *`) degrade gracefully on either
-> side of the rename, but a config save that writes the model-override field will error if
-> the code and schema disagree, so keep step 2 → step 4 close together. For true zero-downtime
-> you'd use expand/contract; for this app a short window is acceptable.
+> Recent migrations: **`0006_ai_model`** (renamed the model-override column to `ai_model`),
+> **`0007_chat_and_strategy`** (`users.strategy_notes`, `trades.exit_rationale`, `chat_messages`),
+> **`0008_short_timeframe`** (`users.short_timeframe` toggle). Run them **before** deploying the
+> new code; keep step 2 → step 4 close together.
 
 ---
 
@@ -68,10 +62,10 @@ npm run db:migrate:remote      # production D1
 
 ```bash
 # Required — the Pages app:
-npx wrangler pages secret put ANTHROPIC_API_KEY
+npx wrangler pages secret put GEMINI_API_KEY
 
 # Required — the Cron Worker needs its OWN copy:
-npx wrangler secret put ANTHROPIC_API_KEY --config cron/wrangler.jsonc
+npx wrangler secret put GEMINI_API_KEY --config cron/wrangler.jsonc
 
 # Optional keyed market-data fallbacks (platform works keyless without them):
 npx wrangler pages secret put FINNHUB_API_KEY
@@ -79,6 +73,9 @@ npx wrangler pages secret put ALPHAVANTAGE_API_KEY
 ```
 
 Secrets take effect immediately for new requests — no redeploy needed just to set a secret.
+
+> 🔑 Treat the key as sensitive: set it only via `wrangler secret put` (never commit it). If a key
+> is ever exposed, rotate it in Google AI Studio and re-run the two `secret put` commands.
 
 ---
 
@@ -100,15 +97,15 @@ changes — it bundles the same code as the Pages Function.
 # 1. Health — expect aiConfigured:true and the configured model.
 curl -s https://<project>.pages.dev/api/health
 #    { "ok": true, "service": "trade-auto", "aiConfigured": true,
-#      "model": "claude-opus-4-8", "time": "..." }
+#      "model": "gemini-2.5-flash", "time": "..." }
 ```
 
-2. **UI:** log in, open the dashboard, expand the **AI Research Hub** (it starts collapsed),
-   and click **Scan markets**. Expect trade-idea suggestions, **one entry per asset**
-   (re-scanning the same asset updates its entry in place rather than duplicating it).
+2. **UI:** log in, open the dashboard, expand the **AI Research Hub** (it starts collapsed) and click
+   **Scan markets** → expect trade-idea suggestions, **one entry per asset**. Click an open position or a
+   trade-log row → the candlestick chart + trade-reason panel focus on it.
 3. **Run a full cycle on demand** (instead of waiting for the 30-min cron):
-   `POST /api/ai/run-cycle` from the authenticated app, or hit the cron Worker's
-   `GET /__run` endpoint if it has a `workers.dev` route.
+   `POST /api/ai/run-cycle` from the authenticated app, or hit the cron Worker's `GET /__run` endpoint if
+   it has a `workers.dev` route.
 4. **Tail logs** if anything looks off:
    ```bash
    npx wrangler pages deployment tail              # the app
@@ -120,14 +117,10 @@ curl -s https://<project>.pages.dev/api/health
 ## 6. Rollback
 
 - **Pages app:** Cloudflare dashboard → Workers & Pages → `trade-auto` → *Deployments* →
-  **Rollback** to the previous deployment (instant). `npx wrangler pages deployment list`
-  shows the history.
-- **Cron Worker:** `npx wrangler rollback --config cron/wrangler.jsonc` (optionally pass a
-  version id from `npx wrangler deployments list --config cron/wrangler.jsonc`).
-- **Database:** D1 migrations are forward-only. To undo `0006` you must also roll back the
-  code, then manually `ALTER TABLE users RENAME COLUMN ai_model TO gemini_model;`
-  (`npx wrangler d1 execute trade-auto-db --remote --command "..."`). Only do this if you are
-  reverting to a pre-Claude build.
+  **Rollback** to the previous deployment (instant). `npx wrangler pages deployment list` shows history.
+- **Cron Worker:** `npx wrangler rollback --config cron/wrangler.jsonc`.
+- **Database:** D1 migrations are forward-only. The recent ones are additive (new columns / table); a
+  column rename (`0006`) would need a manual reverse `ALTER TABLE` only if you roll the code back across it.
 
 ---
 
@@ -146,12 +139,11 @@ curl -s https://<project>.pages.dev/api/health
 
 | Symptom | Likely cause / fix |
 | --- | --- |
-| `/api/health` shows `aiConfigured: false` | `ANTHROPIC_API_KEY` not set on the **Pages** project — set it (section 3). |
-| Cron logs: `ANTHROPIC_API_KEY is not configured` | The **cron Worker** is missing its own secret — `wrangler secret put ANTHROPIC_API_KEY --config cron/wrangler.jsonc`. |
-| Build/deploy fails on `node:` imports | `nodejs_compat` missing from a `wrangler.jsonc` — it's required by the Anthropic SDK. |
-| `POST /api/ai/discover` returns 502 | Tail logs; usually an Anthropic API error (bad key, rate limit) or no market data for the universe. |
-| `no such column: ai_model` / `gemini_model` | Migration `0006` not applied — run `npm run db:migrate:remote`. |
-| AI calls time out | Opus 4.8 with adaptive thinking can be slow; the SDK client timeout is 120s. Lower effort/`max_tokens` in `src/worker/services/claude.ts` if needed. |
+| `/api/health` shows `aiConfigured: false` | `GEMINI_API_KEY` not set on the **Pages** project — set it (section 3). |
+| Cron logs: `GEMINI_API_KEY is not configured` | The **cron Worker** is missing its own secret — `wrangler secret put GEMINI_API_KEY --config cron/wrangler.jsonc`. |
+| `POST /api/ai/discover` returns 502 | Tail logs; usually a Gemini API error (bad key, quota) or no market data for the universe. |
+| `no such column: ai_model` / `strategy_notes` / `short_timeframe` | A migration wasn't applied — run `npm run db:migrate:remote`. |
+| Ideas feel too tame / too wild | Tune the temperatures (`TEMP_ANALYSIS` / `TEMP_DISCOVERY`) in `src/worker/services/gemini.ts`. |
 
 ---
 
@@ -161,10 +153,11 @@ curl -s https://<project>.pages.dev/api/health
 
 | Var | Default | Meaning |
 | --- | --- | --- |
-| `CLAUDE_MODEL` | `claude-opus-4-8` | Model for per-asset analysis. |
-| `CLAUDE_DISCOVERY_MODEL` | `claude-opus-4-8` | Model for the universe discovery scan. |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Model for per-asset analysis. |
+| `GEMINI_DISCOVERY_MODEL` | `gemini-2.5-flash` | Model for the universe discovery scan. |
+| `ENABLE_SEARCH_GROUNDING` | `false` | `true` enables Gemini's Google-Search grounding (extra cost). |
 | `CRON_AUTO_TRADE` | `true` | Master switch for auto-trading on the cron (also needs the per-user toggle). |
 | `DEFAULT_USER_ID` | `1` | Single-user profile the dashboard operates on. |
 
-**Secrets** (`wrangler [pages] secret put`): `ANTHROPIC_API_KEY` (required, both deployables);
+**Secrets** (`wrangler [pages] secret put`): `GEMINI_API_KEY` (required, both deployables);
 `FINNHUB_API_KEY`, `ALPHAVANTAGE_API_KEY`, `POLYGON_API_KEY`, `COINGECKO_API_KEY` (optional).

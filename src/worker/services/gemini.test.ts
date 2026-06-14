@@ -1,8 +1,8 @@
-// Claude service tests — exercise the pure parsing/normalization helpers directly
+// Gemini service tests — exercise the pure parsing/normalization helpers directly
 // (no network, no API key). Run with: npm run test (bundled via scripts/run-test.mjs)
 
 import assert from "node:assert";
-import { extractJson, ideasFromParsed, normalizeDecision } from "./claude";
+import { extractJson, ideasFromParsed, normalizeDecision } from "./gemini";
 
 // --- extractJson ---
 assert.deepEqual(extractJson('```json\n{"a":1}\n```'), { a: 1 });
@@ -69,6 +69,14 @@ assert.equal(extractJson("not json at all"), null);
   assert.ok(decision.confidence <= 1 && decision.confidence >= 0);
 }
 
+// --- short-timeframe mode allows minutes-scale horizons (normal mode floors at 1h) ---
+{
+  const normal = normalizeDecision({ decision: "BUY", entry: 100, stopLoss: 98, takeProfit: 104, timeHorizonHours: 0.25 }, 100, false, false);
+  assert.equal(normal.timeHorizonHours, 1, "normal mode floors the horizon at 1h");
+  const short = normalizeDecision({ decision: "BUY", entry: 100, stopLoss: 98, takeProfit: 104, timeHorizonHours: 0.25 }, 100, false, true);
+  assert.ok(Math.abs(short.timeHorizonHours - 0.25) < 1e-9, "short mode keeps the 15m (0.25h) horizon");
+}
+
 // --- discovery: filters symbols outside the provided universe ---
 {
   const ideas = ideasFromParsed(
@@ -86,4 +94,4 @@ assert.equal(extractJson("not json at all"), null);
   assert.equal(ideas[0].symbol, "AAPL");
 }
 
-console.log("✓ claude service test passed");
+console.log("✓ gemini service test passed");

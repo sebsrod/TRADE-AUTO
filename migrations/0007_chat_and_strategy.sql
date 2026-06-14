@@ -1,4 +1,4 @@
--- Chat with Claude + a user-defined trading-style note that conditions every
+-- Chat with Gemini + a user-defined trading-style note that conditions every
 -- open/close decision, plus an AI rationale captured when the engine CLOSES a trade.
 
 -- --- user's personal trading style / standing instructions for the AI ---------
@@ -12,7 +12,7 @@ ALTER TABLE users ADD COLUMN strategy_notes TEXT;
 ALTER TABLE trades ADD COLUMN exit_rationale TEXT;
 
 -- --- chat history ------------------------------------------------------------
--- Per-user conversation with Claude (asset analysis requests, strategy chats).
+-- Per-user conversation with Gemini (asset analysis requests, strategy chats).
 CREATE TABLE IF NOT EXISTS chat_messages (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id       INTEGER NOT NULL,

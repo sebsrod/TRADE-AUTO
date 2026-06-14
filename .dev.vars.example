@@ -1,8 +1,8 @@
 # Copy to `.dev.vars` for local development (`wrangler dev` loads it automatically).
-# In production, set these with: wrangler secret put ANTHROPIC_API_KEY   (etc.)
+# In production, set these with: wrangler secret put GEMINI_API_KEY   (etc.)
 
-# REQUIRED — Anthropic (Claude) API key (https://console.anthropic.com/settings/keys)
-ANTHROPIC_API_KEY=""
+# REQUIRED — Google Gemini API key (https://aistudio.google.com/apikey)
+GEMINI_API_KEY=""
 
 # OPTIONAL — extra market-data providers (used as fallbacks when set).
 # The platform works keyless out of the box (Binance for crypto, Yahoo for everything else).

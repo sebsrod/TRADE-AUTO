@@ -30,9 +30,10 @@ export interface User {
   max_open_positions: number;
   auto_trade_enabled: number; // 0 | 1
   allow_shorting: number; // 0 | 1
-  ai_model: string | null; // optional per-user Claude model override
+  ai_model: string | null; // optional per-user Gemini model override
   analysis_timeframe: Timeframe;
   strategy_notes: string | null; // user's free-text style/instructions for the AI
+  short_timeframe: number; // 0 | 1 — short swing/momentum mode (minutes-to-hours holds)
   created_at: string;
   updated_at: string;
 }
@@ -265,7 +266,7 @@ export interface OptionChain {
   puts: OptionContract[];
 }
 
-// One turn in the user ⇆ Claude conversation (persisted per user).
+// One turn in the user ⇆ Gemini conversation (persisted per user).
 export interface ChatMessage {
   id: number;
   user_id: number;

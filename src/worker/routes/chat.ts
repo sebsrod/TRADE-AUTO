@@ -9,7 +9,7 @@ import {
   listChatMessages,
 } from "../db";
 import { getSnapshot } from "../services/analysisEngine";
-import { chatWithClaude } from "../services/claude";
+import { chatWithGemini } from "../services/gemini";
 import { normalizeInterval } from "../services/marketData";
 
 const chat = new Hono<AppBindings>();
@@ -86,7 +86,7 @@ chat.get("/", async (c) => {
   return c.json(msgs);
 });
 
-// POST /api/chat — send a message, get Claude's reply (+ optional strategy update).
+// POST /api/chat — send a message, get Gemini's reply (+ optional strategy update).
 chat.post("/", async (c) => {
   const user = await getUser(c.env, c.get("userId"));
   if (!user) return c.json({ error: "unauthorized" }, 401);
@@ -96,7 +96,7 @@ chat.post("/", async (c) => {
   if (!message) return c.json({ error: "message is required" }, 400);
   const explicitSymbol = body.symbol ? String(body.symbol).slice(0, 40) : null;
 
-  // History BEFORE we persist the new turn (chatWithClaude takes the new message separately).
+  // History BEFORE we persist the new turn (chatWithGemini takes the new message separately).
   const history = await listChatMessages(c.env, user.id, 12);
   const contextAssets = await resolveContextAssets(c.env, explicitSymbol, message);
   const contextBlocks = (
@@ -111,7 +111,7 @@ chat.post("/", async (c) => {
   });
 
   try {
-    const res = await chatWithClaude(c.env, user, history, message, contextBlocks);
+    const res = await chatWithGemini(c.env, user, history, message, contextBlocks);
     const reply = await insertChatMessage(c.env, {
       user_id: user.id,
       role: "assistant",
